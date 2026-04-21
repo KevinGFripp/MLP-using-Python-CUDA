@@ -114,24 +114,23 @@ class MultiLayerPerceptronGPU(object):
 
         is_equal = cp.asarray(cp.equal(classification_predictions, truth), dtype=cp.float32)
 
-        accuracy_score = 100*(cp.mean(is_equal, dtype=cp.float32))
+        accuracy_score = (cp.mean(is_equal, dtype=cp.float32))
 
-        return accuracy_score.get()
+        return 100*accuracy_score.get()
 
     @staticmethod
     def cross_entropy_loss(prediction: cp.ndarray, y:cp.ndarray):
         '''
-            Evaluate the cross-entropy loss function -\sum{y*log(p)} over the number of logits,
-             and average the loss over the number of samples.
+        Evaluate the cross-entropy loss function -sum{y*log(p)} over the number of logits,
+        and average the loss over the number of samples.
         :param prediction: output from the forward pass of the network
         :param y: truth
         :return: loss
         '''
-        eps = cp.asarray(1e-8, dtype=cp.float32)
-        loss = cp.asarray(0.0, dtype=cp.float32)
 
-        for n in range(y.shape[1]):
-            loss += cp.sum( y[:,n]* cp.log(prediction[:,n] + eps))
+        eps = cp.asarray(1e-8, dtype=cp.float32)
+
+        loss = cp.sum(y * cp.log(prediction + eps))
 
         return -loss.get()/y.shape[1]
 
