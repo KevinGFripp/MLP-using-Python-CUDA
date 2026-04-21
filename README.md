@@ -1,6 +1,10 @@
 # MLP-using-Python-CUDA
 A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Python, for the MNIST digits classification problem.
 
+<img width="587" height="414" alt="Schematic" src="https://github.com/user-attachments/assets/09def155-d6bd-4be7-b189-475a15e82762" />
+
+
+
 ## Network Features
 - Multi-level dense layer perceptron.
 - Rectified linear (ReLU) and softmax activation functions for the input/hidden layers and output layer, respectively.
@@ -53,7 +57,7 @@ A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Pyt
 ```
 mlp.plot(test_data_gpu)
 ```
-<img width="653" height="669" alt="Result" src="https://github.com/user-attachments/assets/2dbfbad3-7fc8-470c-8f8c-879f764a112c" />
+<img width="450" height="450" alt="Result" src="https://github.com/user-attachments/assets/2dbfbad3-7fc8-470c-8f8c-879f764a112c" />
 
 
  
