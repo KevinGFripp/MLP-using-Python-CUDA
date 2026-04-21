@@ -21,6 +21,16 @@ A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Pyt
 - Adam optimiser step per layer as a single CUDA kernel.
 
 ## Example:
+### Download the dataset
+```
+import kagglehub
+# Download latest version
+path = kagglehub.dataset_download("hojjatk/mnist-dataset")
+```
+
+#### Move data sub-folders to MNIST_dataset folder
+
+### Train and test
     //Load the MNIST dataset
     (train_data,y),(test_data,test) = load_mnist_data()
 
