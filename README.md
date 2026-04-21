@@ -62,7 +62,8 @@ path = kagglehub.dataset_download("hojjatk/mnist-dataset")
   Training accuracy =  100.0 %
   Test accuracy =  98.24 %  | Test loss =  0.06843385
   ```
-
+### Performance
+~1.5 seconds for training and testing on an RTX 4090.
 ### Plot the predictions
 ```
 mlp.plot(test_data_gpu)
