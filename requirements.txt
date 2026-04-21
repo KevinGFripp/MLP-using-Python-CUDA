@@ -1,0 +1,4 @@
+kagglehub>=1.0.0
+numpy>=2.4.4
+cupy-cuda13x>=14.0.1
+matplotlib>=3.10.8
