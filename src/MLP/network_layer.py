@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 @dataclass
 class Layer:
-
     W: ndarray
     b: ndarray
 
@@ -14,9 +13,17 @@ class Layer:
     dW: ndarray
     db: ndarray
 
+    gradient: ndarray
+
     mW: ndarray
     vW: ndarray
 
     mb: ndarray
     vb: ndarray
+
+    a_train: ndarray
+    z_train: ndarray
+
+    a_test: ndarray
+    z_test: ndarray
 
