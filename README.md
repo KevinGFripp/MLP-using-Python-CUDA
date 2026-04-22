@@ -34,7 +34,9 @@ The dominant component of the solve time will be from repeatedly matrix-matrix m
 - Register-level thread-tiling for matrix-multiply-accumulate of size 8x8.
 - In-place loading of the transpose of matrices into shared memory by row -> column major indexing.
 
-The optimisations implemented were not exhaustive. More performance can be extracted from kernel parameter tuning, vectorised loads/writes and/or wmma tensor core accumulation.
+The optimisations implemented were not exhaustive. More performance can be extracted from kernel parameter tuning, vectorised loads/writes and/or wmma tensor core accumulation. 
+
+The gemm kernels are in the region of 60-70% the performance of cuBLAS.
 
 ### Adaptive Moment Estimation Optimisation
 Every iteration of the train loop passes through the weights and biases optimiser based upon propagated gradients in the backward pass. The following optimisations were implemented:
@@ -93,11 +95,16 @@ mlp.plot(test_data_gpu)
 <img width="450" height="450" alt="Result" src="https://github.com/user-attachments/assets/2dbfbad3-7fc8-470c-8f8c-879f764a112c" />
 
 
-### Performance (Ryzen 9950x3D versus RTX 4090)
-
-The GPU can achieve up to 80x the performance of the CPU (0.5 seconds) at large batch sizes due to the problem-size saturating the GPU. At small batch sizes, the dominant cost becomes kernel launch overhead as the GPU becomes under-utilised.
-
-<img width="813" height="406" alt="CPUvsGPU" src="https://github.com/user-attachments/assets/9c9e2ec9-bf9b-4b9a-b5ed-3426dbba7d64" />
+## Performance 
+### Ryzen 9950x3D versus RTX 4090 : 10 epochs versus batch size
 
 
- 
+The GPU can achieve up to 80x the performance of the CPU (~0.4 seconds) at large batch sizes due to the problem-size saturating the GPU. At small batch sizes, the dominant cost becomes kernel launch overhead as the GPU becomes under-utilised.
+
+<img width="981" height="458" alt="CPUvsGPU" src="https://github.com/user-attachments/assets/03969ae9-2963-47db-bf65-b125c584a1f1" />
+
+### Versus PyTorch : 10 epochs versus batch size
+
+Up to batch sizes of 512, the minimised kernel executions leads this implementation to be faster than PyTorch. When the batch size becomes larger, the GPU becomes saturated and the efficiency of the library kernels surpass this implementation.
+
+ <img width="453" height="435" alt="Pytorch_vs_this" src="https://github.com/user-attachments/assets/fb7aee6e-6df2-4223-8d5c-bda6e1a03b02" />
