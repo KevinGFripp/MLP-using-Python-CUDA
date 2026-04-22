@@ -12,13 +12,36 @@ A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Pyt
 - Cross-entropy loss function
 - Optimisation with either stochastic Adaptive moment-estimation (Adam) or stochastic gradient descent.
 - Training with multiple epochs via random shuffling and mini-batches.
-- 
 
 ## Implementation
-- Forward propagation for each layer performed in one CUDA kernel pass (custom CUDA gemm kernel + bias + activation).
+- Forward propagation for each layer performed in one CUDA kernel pass.
 - Back propagation for partial derivatives, with respect to the layer and weights, each a single CUDA kernel.
-- Custom matrix-matrix multiplication (gemm) kernels with extensive optimisations (double buffered block-tiled shared memory, warp-tiling, register-tiling, and optionally wmma tensor core accumulation).
-- Adam optimiser step per layer as a single CUDA kernel.
+- Adam gradient descent optimiser step per layer as a single CUDA kernel.
+
+## Training
+The train dataset is randomly shuffled per epoch, where the data is sampled contiguously in mini-batch strides. After the data has been traversed, the accuracy over the entire shuffled data is computed along with the cross-entropy loss. The data is then re-shuffled for the next training epoch.
+
+## Optimisations
+### Kernel fusion
+Instead of launching multiple kernels, incurring kernel overhead and multiple global memory loads, 'fuse' operations into one kernel call. For example, 
+the forward pass through a hidden layer is a single kernel executing Activation(Weights * Activation + Bias).
+
+### GEMM Optimisation
+The dominant component of the solve time will be from repeatedly matrix-matrix multiplications in the forward and backward passes of the network. The following optimisations were implemented:
+- Double buffered block-tiled shared memory of size 128x16 to overlap loads with compute.
+- Shared memory leading dimension padding to suppress bank conflicts.
+- Warp-level sub-tiling of size 64x32.
+- Register-level thread-tiling for matrix-multiply-accumulate of size 8x8.
+- In-place loading of the transpose of matrices into shared memory by row -> column major indexing.
+
+The optimisations implemented were not exhaustive. More performance can be extracted from kernel parameter tuning, vectorised loads/writes and/or wmma tensor core accumulation.
+
+### Adaptive Moment Estimation Optimisation
+Every iteration of the train loop passes through the weights and biases optimiser based upon propagated gradients in the backward pass. The following optimisations were implemented:
+
+- Vectorised loads and writes to/from global memory with remainder tail handling.
+- Operation fusion into a single kernel.
+
 
 ## Example:
 ### Download the dataset
@@ -62,13 +85,19 @@ path = kagglehub.dataset_download("hojjatk/mnist-dataset")
   Training accuracy =  100.0 %
   Test accuracy =  98.24 %  | Test loss =  0.06843385
   ```
-### Performance
-~1.5 seconds for training and testing on an RTX 4090.
+
 ### Plot the predictions
 ```
 mlp.plot(test_data_gpu)
 ```
 <img width="450" height="450" alt="Result" src="https://github.com/user-attachments/assets/2dbfbad3-7fc8-470c-8f8c-879f764a112c" />
+
+
+### Performance (Ryzen 9950x3D versus RTX 4090)
+
+The GPU can achieve up to 80x the performance of the CPU (0.5 seconds) at large batch sizes due to the problem-size saturating the GPU. At small batch sizes, the dominant cost becomes kernel launch overhead as the GPU becomes under-utilised.
+
+<img width="813" height="406" alt="CPUvsGPU" src="https://github.com/user-attachments/assets/9c9e2ec9-bf9b-4b9a-b5ed-3426dbba7d64" />
 
 
  
