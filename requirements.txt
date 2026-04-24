@@ -2,3 +2,5 @@ kagglehub>=1.0.0
 numpy>=2.4.4
 cupy-cuda13x>=14.0.1
 matplotlib>=3.10.8
+torch>=2.11.0+cu126
+torchvision>=0.26.0
