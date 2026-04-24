@@ -8,10 +8,20 @@ forward_propagate_kernel = RawKernel(
                         'forward_propagate_kernel')
 forward_propagate_kernel.compile()
 
+forward_propagate_wmma_kernel = RawKernel(
+    Path('src/CUDA/MLP/Forwards/Kernels/forward_propagate_wmma_kernel.cu').read_text(),
+                        'forward_propagate_wmma_kernel')
+forward_propagate_wmma_kernel.compile()
+
 forward_propagate_hidden_layer_kernel = RawKernel(
     Path('src/CUDA/MLP/Forwards/Kernels/forward_propagate_hidden_layer_kernel.cu').read_text(),
                         'forward_propagate_hidden_layer_kernel')
 forward_propagate_hidden_layer_kernel.compile()
+
+forward_propagate_hidden_layer_wmma_kernel = RawKernel(
+    Path('src/CUDA/MLP/Forwards/Kernels/forward_propagate_hidden_layer_wmma_kernel.cu').read_text(),
+                        'forward_propagate_hidden_layer_wmma_kernel')
+forward_propagate_hidden_layer_wmma_kernel.compile()
 
 def forward_propagate(W: ndarray, a: ndarray, b: ndarray, z: ndarray):
 
@@ -35,6 +45,37 @@ def hidden_layer(W: ndarray, aprev: ndarray, b: ndarray, z: ndarray, a: ndarray)
     N = a.shape[1]
 
     forward_propagate_hidden_layer_kernel(*kernel_config(M,N),
+                                     (W.data.ptr,
+                                           aprev.data.ptr,
+                                           z.data.ptr,
+                                           b.data.ptr,
+                                           a.data.ptr,
+                                           M,N,K))
+
+    return
+
+def forward_propagate_wmma(W: ndarray, a: ndarray, b: ndarray, z: ndarray):
+
+    M, K = W.shape
+    N = a.shape[1]
+
+
+    forward_propagate_wmma_kernel(*kernel_config(M,N),
+                             (W.data.ptr,
+                                   a.data.ptr,
+                                   z.data.ptr,
+                                   b.data.ptr,
+                                   M,N,K))
+
+    return
+
+
+def hidden_layer_wmma(W: ndarray, aprev: ndarray, b: ndarray, z: ndarray, a: ndarray):
+
+    M, K = W.shape
+    N = a.shape[1]
+
+    forward_propagate_hidden_layer_wmma_kernel(*kernel_config(M,N),
                                      (W.data.ptr,
                                            aprev.data.ptr,
                                            z.data.ptr,
