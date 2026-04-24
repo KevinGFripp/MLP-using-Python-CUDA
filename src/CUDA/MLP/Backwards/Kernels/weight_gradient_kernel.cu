@@ -37,8 +37,16 @@ constexpr int A_LOADS = (BLOCK_TILE_M * BLOCK_TILE_K) / BLOCK_THREADS; // 8
 constexpr int B_LOADS = (BLOCK_TILE_K * BLOCK_TILE_N) / BLOCK_THREADS; // 8
 // ----------------------------------
 
+__device__ __forceinline__ void Load_Tile_opt( const float* __restrict__ Gradient,
+                                           const float* __restrict__ PreviousActivation,
+                                           float Adata[2][BLOCK_TILE_K][BLOCK_TILE_M +4],
+                                           float Bdata[2][BLOCK_TILE_K][BLOCK_TILE_N +4],
+                                           int M, int N, int K,
+                                           int i0,int j0,int tid,
+                                           int tile,int buffer);
 
-__device__ __forceinline__ void Load_Tile( const float* Gradient,const float* PreviousActivation,
+__device__ __forceinline__ void Load_Tile( const float* __restrict__ Gradient,
+                                           const float* __restrict__ PreviousActivation,
                                            float Adata[2][BLOCK_TILE_K][BLOCK_TILE_M +4],
                                            float Bdata[2][BLOCK_TILE_K][BLOCK_TILE_N +4],
                                            int M, int N, int K,
@@ -54,7 +62,7 @@ __device__ __forceinline__ void Compute_Tile(float Adata[2][BLOCK_TILE_K][BLOCK_
                                              int thr_row, int thr_col,
                                              int buffer);
 
-__device__ __forceinline__ void Write_Weight_Gradient_Tile(float* dW, float norm_factor,
+__device__ __forceinline__ void Write_Weight_Gradient_Tile(float* __restrict__ dW, float norm_factor,
                                                            float registers[THREAD_TILE_M][THREAD_TILE_N],
                                                            int M, int N,
                                                            int i0, int j0,
@@ -92,9 +100,9 @@ extern "C" __global__ void weight_gradient_kernel(const float* __restrict__ Grad
     __shared__ __align__(16) float Adata[2][BLOCK_TILE_K][BLOCK_TILE_M +4];
     __shared__ __align__(16) float Bdata[2][BLOCK_TILE_K][BLOCK_TILE_N +4];
 
-    float registers[THREAD_TILE_M][THREAD_TILE_N] = {};   // accumulate into registers
-    float A_row_slice[THREAD_TILE_M];          // A column-slice for one k step
-    float B_column_slice[THREAD_TILE_N];          // B row-slice   for one k step
+    float __align__(16) registers[THREAD_TILE_M][THREAD_TILE_N] = {};   // accumulate into registers
+    float __align__(16) A_row_slice[THREAD_TILE_M];          // A column-slice for one k step
+    float __align__(16) B_column_slice[THREAD_TILE_N];          // B row-slice   for one k step
 
 
     const int NUMBER_OF_K_TILES = (K + BLOCK_TILE_K - 1) / BLOCK_TILE_K;
@@ -128,7 +136,68 @@ extern "C" __global__ void weight_gradient_kernel(const float* __restrict__ Grad
 
 }
 
-__device__ __forceinline__ void Load_Tile( const float* Gradient,const float* PreviousActivation,
+
+__device__ __forceinline__ void Load_Tile_opt( const float* __restrict__ Gradient,
+                                           const float* __restrict__ PreviousActivation,
+                                           float Adata[2][BLOCK_TILE_K][BLOCK_TILE_M +4],
+                                           float Bdata[2][BLOCK_TILE_K][BLOCK_TILE_N +4],
+                                           int M, int N, int K,
+                                           int i0,int j0,int tid,
+                                           int tile,int buffer)
+{
+
+      const int k_tile = tile * BLOCK_TILE_K;
+      const int tid_A_LOADS = tid * A_LOADS;
+      const int tid_B_LOADS = tid * B_LOADS;
+
+     // Load BLOCK_TILE_M×BLOCK_TILE_K slice of A using col offset tile*BLOCK_TILE_K
+        #pragma unroll
+        for (int i = 0; i < A_LOADS; i+=4) {
+
+            const int lin   = tid_A_LOADS + i;
+            const int s_row = lin / BLOCK_TILE_K;
+            const int s_col = lin % BLOCK_TILE_K;
+
+            const int i_row = i0 + s_row;
+            const int j_col = k_tile + s_col;
+
+            float4 v = make_float4(0.0f,0.0f,0.0f,0.0f);
+
+            if (i_row < M)
+            {
+                if (j_col + 3 < K)
+                {
+                    v = *reinterpret_cast<const float4*>(&Gradient[i_row * K + j_col]);
+                }
+                else
+                {
+                    v.x = (j_col < K) ? Gradient[i_row * K + j_col] : 0.0f;
+                    v.y = (j_col+1 < K) ? Gradient[i_row * K + j_col+1] : 0.0f;
+                    v.z = (j_col+2 < K) ? Gradient[i_row * K + j_col+2] : 0.0f;
+                    v.w = (j_col+3 < K) ? Gradient[i_row * K + j_col+3] : 0.0f;
+                }
+            }
+            float4* A_data_ptr = reinterpret_cast<float4*>(&Adata[buffer][s_col][s_row]);
+            *A_data_ptr = v;
+        }
+
+    // Load BLOCK_TILE_K×BLOCK_TILE_N slice of B using row offset tile*BLOCK_TILE_K
+        #pragma unroll
+        for (int i = 0; i < B_LOADS; i++) {
+            const int lin   = tid_B_LOADS + i;
+            const int s_row = lin / BLOCK_TILE_N;
+            const int s_col = lin % BLOCK_TILE_N;
+
+            const int i_row = k_tile + s_row;
+            const int j_col = j0 + s_col;
+            // PreviousActivation is transposed by switching to column-major indexing
+            Bdata[buffer][s_row][s_col] = (i_row < K && j_col < N) ? PreviousActivation[j_col * K + i_row] : 0.0f;
+        }
+
+}
+
+__device__ __forceinline__ void Load_Tile( const float* __restrict__ Gradient,
+                                           const float* __restrict__ PreviousActivation,
                                            float Adata[2][BLOCK_TILE_K][BLOCK_TILE_M +4],
                                            float Bdata[2][BLOCK_TILE_K][BLOCK_TILE_N +4],
                                            int M, int N, int K,
@@ -175,24 +244,23 @@ __device__ __forceinline__ void Compute_Tile(float Adata[2][BLOCK_TILE_K][BLOCK_
                                              int buffer)
 {
 
-   #pragma unroll
+   const int row_base = warp_row * WARP_TILE_M + thr_row * THREAD_TILE_M;
+   const int col_base = warp_col * WARP_TILE_N + thr_col * THREAD_TILE_N;
+
+     #pragma unroll
         for (int k = 0; k < BLOCK_TILE_K; k++) {
             // Vectorised THREAD_TILE_M consecutive rows from shared memory
             #pragma unroll
             for (int m = 0; m < THREAD_TILE_VEC_M; m++) {
-
-                const int row = warp_row * WARP_TILE_M + thr_row * THREAD_TILE_M + 4*m;
-                const float4 vec4A = reinterpret_cast<const float4*>(&Adata[buffer][k][row])[0];
-                reinterpret_cast<float4*>(&A_row_slice[4*m])[0] = vec4A;
-
+                const int row = row_base + 4*m;
+                *reinterpret_cast<float4*>(&A_row_slice[4*m]) = *reinterpret_cast<const float4*>(&Adata[buffer][k][row]);
             }
 
             // Vectorised THREAD_TILE_N consecutive cols from shared memory
             #pragma unroll
             for (int n = 0; n < THREAD_TILE_VEC_N; n++) {
-                const int col = warp_col * WARP_TILE_N + thr_col * THREAD_TILE_N + 4*n;
-                const float4 vec4B = reinterpret_cast<const float4*>(&Bdata[buffer][k][col])[0];
-                reinterpret_cast<float4*>(&B_column_slice[4*n])[0] = vec4B;
+                const int col = col_base + 4*n;
+                *reinterpret_cast<float4*>(&B_column_slice[4*n]) = *reinterpret_cast<const float4*>(&Bdata[buffer][k][col]);
             }
 
             // FMA accumulation in registers
@@ -206,28 +274,62 @@ __device__ __forceinline__ void Compute_Tile(float Adata[2][BLOCK_TILE_K][BLOCK_
 
 }
 
-__device__ __forceinline__ void Write_Weight_Gradient_Tile(float* dW, float norm_factor,
+__device__ __forceinline__ void Write_Weight_Gradient_Tile(float* __restrict__ dW, float norm_factor,
                                                            float registers[THREAD_TILE_M][THREAD_TILE_N],
                                                            int M, int N,
                                                            int i0, int j0,
                                                            int warp_row, int warp_col,
                                                            int thr_row, int thr_col)
 {
+    const int row_tile = i0 + warp_row * WARP_TILE_M + thr_row * THREAD_TILE_M;
+    const int col_tile = j0 + warp_col * WARP_TILE_N + thr_col * THREAD_TILE_N;
 
   // write back to global memory THREAD_TILE_M*THREAD_TILE_N elements
-    #pragma unroll
-    for (int m = 0; m < THREAD_TILE_M; m++)
+
+    const bool full_tile = ((row_tile +THREAD_TILE_M) <= M && (col_tile +THREAD_TILE_N)<=N);
+
+    // vectorised
+    if (full_tile)
     {
-        const int row = i0 + warp_row * WARP_TILE_M + thr_row * THREAD_TILE_M + m;
-
         #pragma unroll
-        for (int n = 0; n < THREAD_TILE_N; n++)
+        for (int k = 0; k < THREAD_TILE_M*THREAD_TILE_N; k+=4)
         {
-            const int col = j0 + warp_col * WARP_TILE_N + thr_col * THREAD_TILE_N + n;
+            const int m = k / THREAD_TILE_N;
+            const int n = k % THREAD_TILE_N;
 
-            // dW = norm_factor * gradient * previous_activation.T
-            if (row < M && col < N) dW[row * N + col] = norm_factor * registers[m][n];
+            const int row = row_tile + m;
+            const int col = col_tile + n;
+
+            float4 v = make_float4(0.0f,0.0f,0.0f,0.0f);
+
+                v = *reinterpret_cast<const float4*>(&registers[m][n]);
+                v.x *= norm_factor;
+                v.y *= norm_factor;
+                v.z *= norm_factor;
+                v.w *= norm_factor;
+
+                *reinterpret_cast<float4*>(&dW[row*N + col]) = v;
+        }
+
+    }
+    else // scalar fallback
+    {
+        #pragma unroll
+        for (int m = 0; m < THREAD_TILE_M; m++)
+        {
+            const int row = row_tile + m;
+
+            if (row < M)
+            {
+                #pragma unroll
+                for (int n = 0; n < THREAD_TILE_N; n++)
+                {
+                    const int col = col_tile + n;
+
+                    // dW = norm_factor * gradient * previous_activation.T
+                    if (col < N) dW[row * N + col] = norm_factor * registers[m][n];
+                }
+            }
         }
     }
-
 }
