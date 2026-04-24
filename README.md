@@ -3,46 +3,71 @@ A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Pyt
 
 <img width="587" height="414" alt="Schematic" src="https://github.com/user-attachments/assets/09def155-d6bd-4be7-b189-475a15e82762" />
 
-
-
 ## Network Features
 - Multi-level dense layer perceptron.
 - Rectified linear (ReLU) and softmax activation functions for the input/hidden layers and output layer, respectively.
 - Network weights initialised with "He"-type random numbers drawn from a uniform distribution.
-- Cross-entropy loss function
+- Cross-entropy loss function.
 - Optimisation with either stochastic Adaptive moment-estimation (Adam) or stochastic gradient descent.
 - Training with multiple epochs via random shuffling and mini-batches.
+
+## Performance 
+### Ryzen 9950x3D versus RTX 4090 : 10 epochs versus batch size
+
+The GPU (~0.3 seconds) can achieve up to ~35x the performance of the CPU NumPy implementation at larger batch sizes due to the problem-size better saturating the GPU. At smaller batch sizes, the dominant cost becomes kernel launch overhead as the GPU becomes under-utilised.
+
+<img width="722" height="356" alt="CPUvsGPUvsGPUOptimised" src="https://github.com/user-attachments/assets/ef547db8-0a39-4bc8-a62e-90b70a7b4c53" />
+
+
+### Versus PyTorch : 10 epochs versus batch size
+
+Up to a batch size of 2048, the minimised kernel executions leads this implementation to be faster than PyTorch. At 2048 batch size, this implementation and PyTorch have converged.
+
+<img width="436" height="383" alt="PyTorchvsGPUvsGPUOptimised" src="https://github.com/user-attachments/assets/eef75bf9-8d52-4863-a86f-d63832329ed6" />
+
 
 ## Implementation
 - Forward propagation for each layer performed in one CUDA kernel pass.
 - Back propagation for partial derivatives, with respect to the layer and weights, each a single CUDA kernel.
 - Adam gradient descent optimiser step per layer as a single CUDA kernel.
+- Tensor-core accelerated or native fp32 GEMM kernels.
 
 ## Training
 The train dataset is randomly shuffled per epoch, where the data is sampled contiguously in mini-batch strides. After the data has been traversed, the accuracy over the entire shuffled data is computed along with the cross-entropy loss. The data is then re-shuffled for the next training epoch.
 
 ## Optimisations
 ### Kernel fusion
-Instead of launching multiple kernels, incurring kernel overhead and multiple global memory loads, 'fuse' operations into one kernel call. For example, 
-the forward pass through a hidden layer is a single kernel executing Activation(Weights * Activation + Bias).
+Instead of launching multiple kernels, incurring kernel overhead and multiple global memory loads, multiple operations are fused into one kernel call. For example, the forward pass through a hidden layer is a single kernel executing Activation(Weights * Activation + Bias).
 
 ### GEMM Optimisation
-The dominant component of the solve time will be from repeatedly matrix-matrix multiplications in the forward and backward passes of the network. The following optimisations were implemented:
+A large contribution to the overall solve time will be from repeated matrix-matrix multiplications in the forward and backward passes of the network.
+
+#### GEMM tiling structure
+--- 128 x 16 block tiling (double-buffered shared memory)
+
+----- 64 x 32 warp tiling
+
+-------- 8x8 register accumulation (fp32) or 16x16 (half) wmma fragments
+   
+         
+The following optimisations were implemented:
 - Double buffered block-tiled shared memory of size 128x16 to overlap loads with compute.
+- Vectorised float4 loads from global memory.
 - Shared memory leading dimension padding to suppress bank conflicts.
-- Warp-level sub-tiling of size 64x32.
-- Register-level thread-tiling for matrix-multiply-accumulate of size 8x8.
-- In-place loading of the transpose of matrices into shared memory by row -> column major indexing.
+- Per-warp sub-tiling of shared memory tile blocks.
+- Register-level thread-tiling for matrix-multiply-accumulate in fp32.
+- Tensor core fp32 wmma fragment accumulation for fp16 cast inputs.
+- In-place loading of the transpose of matrices into shared memory by row -> column major indexing for the back-propagation steps.
+- Vectorised float4 write-backs to global memory.
 
-The optimisations implemented were not exhaustive. More performance can be extracted from kernel parameter tuning, vectorised loads/writes and/or wmma tensor core accumulation. 
-
-The gemm kernels are in the region of 60-70% the performance of cuBLAS.
+The optimisations implemented have not been exhaustive. More performance can be extracted from tuning of kernel parameters, for example.
+The GEMM kernels implemented here will not be faster than cuBLAS or PyTorch kernels.
 
 ### Adaptive Moment Estimation Optimisation
 Every iteration of the train loop passes through the weights and biases optimiser based upon propagated gradients in the backward pass. The following optimisations were implemented:
 
-- Vectorised loads and writes to/from global memory with remainder tail handling.
-- Operation fusion into a single kernel.
+- Vectorised loads and writes to/from global memory.
+- Operation fusion into a single kernel to minimise overhead and visits to global memory.
 
 
 ## Example:
@@ -94,17 +119,3 @@ mlp.plot(test_data_gpu)
 ```
 <img width="450" height="450" alt="Result" src="https://github.com/user-attachments/assets/2dbfbad3-7fc8-470c-8f8c-879f764a112c" />
 
-
-## Performance 
-### Ryzen 9950x3D versus RTX 4090 : 10 epochs versus batch size
-
-
-The GPU can achieve up to 80x the performance of the CPU (~0.4 seconds) at large batch sizes due to the problem-size saturating the GPU. At small batch sizes, the dominant cost becomes kernel launch overhead as the GPU becomes under-utilised.
-
-<img width="981" height="458" alt="CPUvsGPU" src="https://github.com/user-attachments/assets/03969ae9-2963-47db-bf65-b125c584a1f1" />
-
-### Versus PyTorch : 10 epochs versus batch size
-
-Up to batch sizes of 512, the minimised kernel executions leads this implementation to be faster than PyTorch. When the batch size becomes larger, the GPU becomes saturated and the efficiency of the library kernels surpass this implementation.
-
- <img width="453" height="435" alt="Pytorch_vs_this" src="https://github.com/user-attachments/assets/fb7aee6e-6df2-4223-8d5c-bda6e1a03b02" />
