@@ -5,8 +5,10 @@ from src.Optimiser.optimisers_gpu import SGDOptimiser, AdamOptimiser
 from src.MLP.network_layer_gpu import Layer
 
 from src.CUDA.MLP.Activations.activation_kernels import relu as relu_cuda
-from src.CUDA.MLP.Forwards.forward_propagation_kernels import hidden_layer, forward_propagate
-from src.CUDA.MLP.Backwards.backward_propagation_kernels import hidden_layer_gradient, weight_gradient
+#from src.CUDA.MLP.Forwards.forward_propagation_kernels import hidden_layer, forward_propagate
+from src.CUDA.MLP.Forwards.forward_propagation_kernels import hidden_layer_wmma, forward_propagate_wmma
+#from src.CUDA.MLP.Backwards.backward_propagation_kernels import hidden_layer_gradient, weight_gradient
+from src.CUDA.MLP.Backwards.backward_propagation_kernels import weight_gradient_wmma, hidden_layer_gradient_wmma
 
 import matplotlib.pyplot as plt
 from cupy.random import permutation
@@ -141,15 +143,15 @@ class MultiLayerPerceptronGPU(object):
            return:
         '''
         # Input
-        hidden_layer(self.layers[0].W, x, self.layers[0].b, self.layers[0].z,self.layers[0].a)
+        hidden_layer_wmma(self.layers[0].W, x, self.layers[0].b, self.layers[0].z,self.layers[0].a)
 
         # hidden layers
         for i in range(1,self.n_layers-1):
-            hidden_layer(self.layers[i].W, self.layers[i-1].a, self.layers[i].b, self.layers[i].z, self.layers[i].a)
+            hidden_layer_wmma(self.layers[i].W, self.layers[i-1].a, self.layers[i].b, self.layers[i].z, self.layers[i].a)
 
         #Output layer
         l = self.n_layers - 1
-        forward_propagate(self.layers[l].W, self.layers[l-1].a, self.layers[l].b, self.layers[l].z)
+        forward_propagate_wmma(self.layers[l].W, self.layers[l-1].a, self.layers[l].b, self.layers[l].z)
         self.layers[l].a = self.softmax(self.layers[l].z)
 
         return self.layers[l].a
@@ -162,16 +164,16 @@ class MultiLayerPerceptronGPU(object):
         '''
 
         # Input
-        hidden_layer(self.layers[0].W, x, self.layers[0].b, self.layers[0].z_train, self.layers[0].a_train)
+        hidden_layer_wmma(self.layers[0].W, x, self.layers[0].b, self.layers[0].z_train, self.layers[0].a_train)
 
         # hidden layers
         for i in range(1, self.n_layers - 1):
-            hidden_layer(self.layers[i].W, self.layers[i - 1].a_train, self.layers[i].b,
+            hidden_layer_wmma(self.layers[i].W, self.layers[i - 1].a_train, self.layers[i].b,
                          self.layers[i].z_train, self.layers[i].a_train)
 
         # Output layer
         l = self.n_layers - 1
-        forward_propagate(self.layers[l].W, self.layers[l - 1].a_train, self.layers[l].b, self.layers[l].z_train)
+        forward_propagate_wmma(self.layers[l].W, self.layers[l - 1].a_train, self.layers[l].b, self.layers[l].z_train)
         self.layers[l].a_train = self.softmax(self.layers[l].z_train)
 
         return self.layers[l].a_train
@@ -184,16 +186,16 @@ class MultiLayerPerceptronGPU(object):
         '''
 
         # Input
-        hidden_layer(self.layers[0].W, x, self.layers[0].b, self.layers[0].z_test,self.layers[0].a_test)
+        hidden_layer_wmma(self.layers[0].W, x, self.layers[0].b, self.layers[0].z_test,self.layers[0].a_test)
 
         # hidden layers
         for i in range(1,self.n_layers-1):
-            hidden_layer(self.layers[i].W, self.layers[i-1].a_test, self.layers[i].b,
+            hidden_layer_wmma(self.layers[i].W, self.layers[i-1].a_test, self.layers[i].b,
                          self.layers[i].z_test, self.layers[i].a_test)
 
         #Output layer
         l = self.n_layers - 1
-        forward_propagate(self.layers[l].W, self.layers[l-1].a_test, self.layers[l].b, self.layers[l].z_test)
+        forward_propagate_wmma(self.layers[l].W, self.layers[l-1].a_test, self.layers[l].b, self.layers[l].z_test)
         self.layers[l].a_test = self.softmax(self.layers[l].z_test)
 
         return self.layers[l].a_test
@@ -211,12 +213,12 @@ class MultiLayerPerceptronGPU(object):
             if n == output_layer:
                 self.layers[n].gradient = y_output - y
             else:
-                hidden_layer_gradient(self.layers[n+1].W, self.layers[n+1].gradient,
+                hidden_layer_gradient_wmma(self.layers[n+1].W, self.layers[n+1].gradient,
                                       self.layers[n].gradient, self.layers[n].z)
 
             previous_activation = x if n == 0 else self.layers[n-1].a
 
-            weight_gradient(self.layers[n].gradient, previous_activation, self.layers[n].dW)
+            weight_gradient_wmma(self.layers[n].gradient, previous_activation, self.layers[n].dW)
             self.layers[n].db = norm_factor * cp.sum(self.layers[n].gradient, axis=1,
                                                      keepdims=False, dtype=cp.float32)
 
