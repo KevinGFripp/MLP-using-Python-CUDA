@@ -66,7 +66,7 @@ path = kagglehub.dataset_download("hojjatk/mnist-dataset")
     test_gpu = asarray(test,dtype='float32',order='C')
 
     //Setup
-    mlp = MultiLayerPerceptronGPU(layer_sizes=[784, 1024, 512, 10], batch_size=256, seed=0)
+    mlp = MultiLayerPerceptronGPU(layer_sizes=[784, 1024, 512, 10], batch_size=512, seed=0)
 
     mlp.train(train_data_gpu, y_gpu, learning_rate=1e-3, epochs=10)
 
@@ -74,18 +74,18 @@ path = kagglehub.dataset_download("hojjatk/mnist-dataset")
 
   ### Output
   ```
-  epoch =  1 |  Accuracy =  97.565 % | Loss =  0.0809
-  epoch =  2 |  Accuracy =  98.90667 % | Loss =  0.03887933
-  epoch =  3 |  Accuracy =  99.42667 % | Loss =  0.02105977
-  epoch =  4 |  Accuracy =  99.70334 % | Loss =  0.012894733
-  epoch =  5 |  Accuracy =  99.808334 % | Loss =  0.0088467095
-  epoch =  6 |  Accuracy =  99.955 % | Loss =  0.003703843
-  epoch =  7 |  Accuracy =  99.985 % | Loss =  0.0019400718
-  epoch =  8 |  Accuracy =  99.988335 % | Loss =  0.0013510864
-  epoch =  9 |  Accuracy =  99.94334 % | Loss =  0.0025417348
-  epoch =  10 |  Accuracy =  100.0 % | Loss =  0.0005004144
-  Training accuracy =  100.0 %
-  Test accuracy =  98.24 %  | Test loss =  0.06843385
+epoch =  1 |  Accuracy =  97.22833 % | Loss =  0.100154914
+epoch =  2 |  Accuracy =  98.64333 % | Loss =  0.05184615
+epoch =  3 |  Accuracy =  99.48167 % | Loss =  0.023750618
+epoch =  4 |  Accuracy =  99.70167 % | Loss =  0.0141675165
+epoch =  5 |  Accuracy =  99.86167 % | Loss =  0.008657567
+epoch =  6 |  Accuracy =  99.956665 % | Loss =  0.004854481
+epoch =  7 |  Accuracy =  99.986664 % | Loss =  0.00238529
+epoch =  8 |  Accuracy =  99.97666 % | Loss =  0.0027756281
+epoch =  9 |  Accuracy =  100.0 % | Loss =  0.0012471621
+epoch =  10 |  Accuracy =  100.0 % | Loss =  0.0007783677
+Training accuracy =  100.0 %
+Test accuracy =  98.14 %  | Test loss =  0.07018457
   ```
 
 ### Plot the predictions
