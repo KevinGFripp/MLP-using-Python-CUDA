@@ -64,6 +64,19 @@ __device__ __forceinline__ void Write_Layer_Gradient_Tile(float* __restrict__ Th
                                                           int warp_row,
                                                           int warp_col);
 
+template<typename AccFrag>
+__device__ __forceinline__ void Write_Layer_Gradient_Tile_opt(float* __restrict__ This_Layer_Gradient,
+                                                          const float* __restrict__ This_Layer_z,
+                                                          const float norm_factor,
+                                                          AccFrag& Accumulated_fragments,
+                                                          float* C_Tile,
+                                                          int M, int N,
+                                                          int i0, int j0,
+                                                          int lane,
+                                                          int warp_id,
+                                                          int warp_row,
+                                                          int warp_col);
+
 __device__ __forceinline__ float ReLU_grad(float z);
 
 
@@ -305,6 +318,116 @@ __device__ __forceinline__ float ReLU_grad(float z)
 }
 
 template<typename AccFrag>
+__device__ __forceinline__ void Write_Layer_Gradient_Tile_opt(float* __restrict__ This_Layer_Gradient,
+                                                          const float* __restrict__ This_Layer_z,
+                                                          const float norm_factor,
+                                                          AccFrag& Accumulated_fragments,
+                                                          float* C_Tile,
+                                                          int M, int N,
+                                                          int i0, int j0,
+                                                          int lane,
+                                                          int warp_id,
+                                                          int warp_row,
+                                                          int warp_col)
+{
+
+// Pad the leading dimension by 4 to suppress bank conflicts and ensure alignment
+    constexpr int SMEM_STRIDE = WMMA_TILE_N + 4;
+    float* C_Tile_Warp_Ptr = C_Tile + warp_id * WMMA_TILE_M * SMEM_STRIDE;
+
+    const int w_row_tile = i0 + warp_row * WARP_TILE_M;
+    const int w_col_tile = j0 + warp_col * WARP_TILE_N;
+
+    const int sub_tile_index = 8*lane;
+
+    const int ti = sub_tile_index / WMMA_TILE_N;
+    const int tj = sub_tile_index % WMMA_TILE_N;
+    const int offset = ti*N + tj;
+
+    #pragma unroll
+    for (int tile_row = 0; tile_row < NUM_WMMA_TILES_M; tile_row++)
+    {
+        const int row = w_row_tile + tile_row * WMMA_TILE_M;
+
+        #pragma unroll
+        for (int tile_col = 0; tile_col < NUM_WMMA_TILES_N; tile_col++)
+        {
+            const int col = w_col_tile + tile_col * WMMA_TILE_N;
+            const int g_index = row*N + col;
+
+            // if true, use float4 vectorised operations
+            const bool full_tile = (row + WMMA_TILE_M <= M) && (col + WMMA_TILE_N <= N);
+
+            // Store fragment into padded shared memory
+                wmma::store_matrix_sync(C_Tile_Warp_Ptr,
+                                        Accumulated_fragments[tile_row][tile_col],
+                                        SMEM_STRIDE,
+                                        wmma::mem_row_major);
+
+            // Each thread in a warp computes 2 consecutive float4 reads and writes (no guards)
+           if (full_tile) //vectorised
+           {
+
+            #pragma unroll
+            for (int n =0; n < 2; n++){
+                float4 grad = *reinterpret_cast<const float4*>(&C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + 4*n]);
+                const float4 z = *reinterpret_cast<const float4*>(&This_Layer_z[g_index + offset + 4*n]);
+
+                grad.x *= ReLU_grad(z.x) * norm_factor;
+                grad.y *= ReLU_grad(z.y) * norm_factor;
+                grad.z *= ReLU_grad(z.z) * norm_factor;
+                grad.w *= ReLU_grad(z.w) * norm_factor;
+
+            *reinterpret_cast<float4*>(&This_Layer_Gradient[g_index + offset + 4*n]) = grad;
+            }
+           }
+           else // scalar fallback
+           {
+            #pragma unroll
+            for (int n =0; n < 2; n++)
+            {
+                if ( (row + ti) < M)
+                {
+                     #pragma unroll
+                    for (int n = 0; n < 8; n+=4)
+                    {
+                     if ((col + tj + n + 3) < N) // vectorised
+                     {
+                        float4 grad = *reinterpret_cast<const float4*>(&C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n]);
+                        const float4 z = *reinterpret_cast<const float4*>(&This_Layer_z[g_index + offset + n]);
+                        grad.x *= ReLU_grad(z.x) * norm_factor;
+                        grad.y *= ReLU_grad(z.y) * norm_factor;
+                        grad.z *= ReLU_grad(z.z) * norm_factor;
+                        grad.w *= ReLU_grad(z.w) * norm_factor;
+
+                        *reinterpret_cast<float4*>(&This_Layer_Gradient[g_index + offset + n]) = grad;
+
+                     }
+                     else // scalar
+                     {
+                        #pragma unroll
+                        for (int p = 0; p < 4; p++)
+                        {
+                            if ((col + tj + n + p) < N)
+                            {
+                                const float grad_val = C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n +p];
+                                const float z_val = This_Layer_z[g_index + offset + n +p];
+
+                                grad_val *= ReLU_grad(z_val)*norm_factor;
+                                This_Layer_Gradient[g_index + offset + n + p] = grad_val;
+                            }
+                        }
+                     }
+                    }
+                }
+            }
+
+           }
+        }
+    }
+}
+
+template<typename AccFrag>
 __device__ __forceinline__ void Write_Layer_Gradient_Tile(float* __restrict__ This_Layer_Gradient,
                                                           const float* __restrict__ This_Layer_z,
                                                           const float norm_factor,
@@ -334,6 +457,7 @@ __device__ __forceinline__ void Write_Layer_Gradient_Tile(float* __restrict__ Th
         for (int tile_col = 0; tile_col < NUM_WMMA_TILES_N; tile_col++)
         {
             const int col = w_col_tile + tile_col * WMMA_TILE_N;
+            const int g_index = row*N + col;
 
             // if true, use float4 vectorised operations
             const bool full_tile = (row + WMMA_TILE_M <= M) && (col + WMMA_TILE_N <= N);
@@ -346,35 +470,28 @@ __device__ __forceinline__ void Write_Layer_Gradient_Tile(float* __restrict__ Th
 
            if (full_tile) //vectorised
            {
-                // every 4th thread in a warp loads float4 elements 8 times from shared memory
-                // writes 4 floats back to global memory
-                if (lane % 4 == 0)
-                {
-                    const int g_index = row*N + col;
-                    #pragma unroll
-                    for (int n = lane; n < WMMA_TILE_M*WMMA_TILE_N; n+=32)
-                    {
-                        const int ti = n / WMMA_TILE_N;
-                        const int tj = n % WMMA_TILE_N;
 
-                        const int offset = ti*N + tj;
+            const int sub_tile_index = 8*lane;
+            const int ti = sub_tile_index / WMMA_TILE_N;
+            const int tj = sub_tile_index % WMMA_TILE_N;
+            const int offset = ti*N + tj;
 
-                        float4 grad = *reinterpret_cast<const float4*>(&C_Tile_Warp_Ptr[ti*SMEM_STRIDE +tj]);
-                        float4 z = *reinterpret_cast<const float4*>(&This_Layer_z[g_index+offset]);
+            #pragma unroll
+            for (int n =0; n < 2; n++){
+                float4 grad = *reinterpret_cast<const float4*>(&C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + 4*n]);
+                const float4 z = *reinterpret_cast<const float4*>(&This_Layer_z[g_index + offset + 4*n]);
 
-                        grad.x *= ReLU_grad(z.x) * norm_factor;
-                        grad.y *= ReLU_grad(z.y) * norm_factor;
-                        grad.z *= ReLU_grad(z.z) * norm_factor;
-                        grad.w *= ReLU_grad(z.w) * norm_factor;
+                grad.x *= ReLU_grad(z.x) * norm_factor;
+                grad.y *= ReLU_grad(z.y) * norm_factor;
+                grad.z *= ReLU_grad(z.z) * norm_factor;
+                grad.w *= ReLU_grad(z.w) * norm_factor;
 
-                        *reinterpret_cast<float4*>(&This_Layer_Gradient[g_index+offset]) = grad;
-
-                    }
-                }
-
+            *reinterpret_cast<float4*>(&This_Layer_Gradient[g_index + offset + 4*n]) = grad;
+            }
            }
            else // scalar fallback
            {
+
                 #pragma unroll
                 for (int ti = 0; ti < WMMA_TILE_M; ti++)
                 {

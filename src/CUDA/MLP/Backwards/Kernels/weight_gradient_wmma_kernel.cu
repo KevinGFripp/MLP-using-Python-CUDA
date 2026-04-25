@@ -325,6 +325,7 @@ __device__ __forceinline__ void Write_Gradient_Tile_opt(float* __restrict__ dW,
     const int w_row_tile = i0 + warp_row * WARP_TILE_M;
     const int w_col_tile = j0 + warp_col * WARP_TILE_N;
 
+
     #pragma unroll
     for (int tile_row = 0; tile_row < NUM_WMMA_TILES_M; tile_row++)
     {
@@ -362,25 +363,43 @@ __device__ __forceinline__ void Write_Gradient_Tile_opt(float* __restrict__ dW,
                                         Accumulated_fragments[tile_row][tile_col],
                                         SMEM_STRIDE,
                                         wmma::mem_row_major);
+
+                const int sub_tile_index = 8*lane;
+                const int ti = sub_tile_index / WMMA_TILE_N;
+                const int tj = sub_tile_index % WMMA_TILE_N;
+                const int offset = ti*N + tj;
+
+                const int g_index = row*N + col;
+
                 #pragma unroll
-                for (int ti = 0; ti < WMMA_TILE_M; ti++)
+                for (int n =0; n < 2; n++)
                 {
-                    const int g_row = row + ti;
-
-                    float* __restrict__ dW_row = dW + g_row * N;
-                    const float* dW_Tile_row = dW_Tile_Warp_Ptr + ti * SMEM_STRIDE;
-
-                    // Scalar fallback
-                    if (g_row < M)
+                    if ( (row + ti) < M)
                     {
                         #pragma unroll
-                        for (int tj = 0; tj < WMMA_TILE_N; tj++)
+                        for (int n = 0; n < 8; n+=4)
                         {
-                            const int g_col = col + tj;
-                            if (g_col < N)
+                        if ((col + tj + n + 3) < N) // vectorised
+                        {
+                            float4 W_vals = *reinterpret_cast<const float4*>(&dW_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n]);
+                            W_vals.x *= norm_factor;
+                            W_vals.y *= norm_factor;
+                            W_vals.z *= norm_factor;
+                            W_vals.w *= norm_factor;
+
+                            *reinterpret_cast<float4*>(&dW[g_index + offset + n]) = W_vals;
+                        }
+                        else // scalar
+                        {
+                            #pragma unroll
+                            for (int p = 0; p < 4; p++)
                             {
-                                dW_row[g_col]  = dW_Tile_row[tj]*norm_factor;
+                                if ((col + tj + n + p) < N)
+                                {
+                                dW[g_index + offset + n + p] = dW_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n + p] * norm_factor;
+                                }
                             }
+                        }
                         }
                     }
                 }
