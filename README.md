@@ -14,17 +14,16 @@ A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Pyt
 ## Performance 
 ### Ryzen 9950x3D versus RTX 4090 : 10 epochs versus batch size
 
-The GPU (~0.3 seconds) can achieve up to ~35x the performance of the CPU NumPy implementation at larger batch sizes due to the problem-size better saturating the GPU. At smaller batch sizes, the dominant cost becomes kernel launch overhead as the GPU becomes under-utilised.
+The GPU (0.27 seconds) can achieve up to ~35x the performance of the CPU NumPy implementation at larger batch sizes due to the problem-size better saturating the GPU. At smaller batch sizes, the dominant cost becomes kernel launch overhead as the GPU becomes under-utilised.
 
-<img width="722" height="356" alt="CPUvsGPUvsGPUOptimised" src="https://github.com/user-attachments/assets/ef547db8-0a39-4bc8-a62e-90b70a7b4c53" />
+<img width="1036" height="488" alt="CPUvsGPUvsGPUOptimised" src="https://github.com/user-attachments/assets/60478b88-5a7c-4bee-98b2-afde80406508" />
 
 
 ### Versus PyTorch : 10 epochs versus batch size
 
 Up to a batch size of 2048, the minimised kernel executions leads this implementation to be faster than PyTorch. At 2048 batch size, this implementation and PyTorch have converged.
 
-<img width="436" height="383" alt="PyTorchvsGPUvsGPUOptimised" src="https://github.com/user-attachments/assets/eef75bf9-8d52-4863-a86f-d63832329ed6" />
-
+<img width="898" height="426" alt="PyTorchvsGPUvsGPUOptimised" src="https://github.com/user-attachments/assets/65bc12a9-a279-4dd4-98cd-401e76ef1898" />
 
 ## Implementation
 - Forward propagation for each layer performed in one CUDA kernel pass.
