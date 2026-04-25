@@ -78,32 +78,28 @@ extern "C" __global__ void adam_optimiser_vectorised_kernel(float* __restrict__ 
  // vectorised weights update
  if (tid < matrix_end)
  {
+    const int g_id = 4*tid;
+
     // vectorised loads
-    float4* Wgrad_ptr = reinterpret_cast<float4*>(WeightGradients);
-    const float4 Wgrad = Wgrad_ptr[tid];
-
-    float4* mW_ptr = reinterpret_cast<float4*>(mWeights);
-    const float4 mW = mW_ptr[tid];
-
-    float4* vW_ptr = reinterpret_cast<float4*>(vWeights);
-    const float4 vW = vW_ptr[tid];
+    const float4 Wgrad = *reinterpret_cast<float4*>(&WeightGradients[g_id]);
+    const float4 mW = *reinterpret_cast<float4*>(&mWeights[g_id]);
+    const float4 vW = *reinterpret_cast<float4*>(&vWeights[g_id]);
 
     // momentum
     const float4 update_mW = beta1 * mW + prefactor1 * Wgrad;
-    mW_ptr[tid] = update_mW;
+    *reinterpret_cast<float4*>(&mWeights[g_id]) = update_mW;
 
     // 2nd moment
     const float4 update_vW = beta2 * vW + prefactor2 * Wgrad * Wgrad;
-    vW_ptr[tid] = update_vW;
+    *reinterpret_cast<float4*>(&vWeights[g_id]) = update_vW;
 
     // bias correction
     const float4 mW_hat = beta1_correction * update_mW;
     const float4 vW_hat = beta2_correction * update_vW;
 
     // final update
-    float4* W_ptr = reinterpret_cast<float4*>(Weights);
-    const float4 Weights_float4 = W_ptr[tid];
-    W_ptr[tid] = Weights_float4 -(learning_rate * mW_hat * r_sqrtf_float4(vW_hat));
+    const float4 Weights_float4 = *reinterpret_cast<float4*>(&Weights[g_id]);
+    *reinterpret_cast<float4*>(&Weights[g_id]) = Weights_float4 -(learning_rate * mW_hat * r_sqrtf_float4(vW_hat));
  }
 
  // handle remainder tail
@@ -133,32 +129,28 @@ extern "C" __global__ void adam_optimiser_vectorised_kernel(float* __restrict__ 
 // vectorised biases update
 if (tid < vec_end)
 {
+    const int g_id = 4*tid;
+
     // vectorised loads
-    float4* bgrad_ptr = reinterpret_cast<float4*>(BiasGradients);
-    const float4 bgrad = bgrad_ptr[tid];
-
-    float4* mb_ptr = reinterpret_cast<float4*>(mbiases);
-    const float4 mb = mb_ptr[tid];
-
-    float4* vb_ptr = reinterpret_cast<float4*>(vbiases);
-    const float4 vb = vb_ptr[tid];
+    const float4 bgrad = *reinterpret_cast<float4*>(&BiasGradients[g_id]);
+    const float4 mb = *reinterpret_cast<float4*>(&mbiases[g_id]);
+    const float4 vb = *reinterpret_cast<float4*>(&vbiases[g_id]);
 
     // momentum
     const float4 update_mb = beta1 * mb + prefactor1 * bgrad;
-    mb_ptr[tid] = update_mb;
+    *reinterpret_cast<float4*>(&mbiases[g_id]) = update_mb;
 
     // 2nd moment
     const float4 update_vb = beta2 * vb + prefactor2 * bgrad * bgrad;
-    vb_ptr[tid] = update_vb;
+    *reinterpret_cast<float4*>(&vbiases[g_id]) = update_vb;
 
     // bias correction
     const float4 mb_hat = beta1_correction * update_mb;
     const float4 vb_hat = beta2_correction * update_vb;
 
     // final update
-    float4* b_ptr = reinterpret_cast<float4*>(Biases);
-    const float4 Biases_float4 = b_ptr[tid];
-    b_ptr[tid] = Biases_float4 -(learning_rate * mb_hat * r_sqrtf_float4(vb_hat));
+    const float4 Biases_float4 = *reinterpret_cast<float4*>(&Biases[g_id]);
+    *reinterpret_cast<float4*>(&Biases[g_id]) = Biases_float4 -(learning_rate * mb_hat * r_sqrtf_float4(vb_hat));
 
 }
 
