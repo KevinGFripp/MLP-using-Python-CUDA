@@ -71,6 +71,18 @@ __device__ __forceinline__ void Write_Z_Tile(float* __restrict__ C,
                                              int warp_row,
                                              int warp_col);
 
+template<typename AccFrag>
+__device__ __forceinline__ void Write_Z_Tile_opt(float* __restrict__ C,
+                                             const float* __restrict__ Bias,
+                                             AccFrag& Accumulated_fragments,
+                                             float* C_Tile,
+                                             int M, int N,
+                                             int i0, int j0,
+                                             int lane,
+                                             int warp_id,
+                                             int warp_row,
+                                             int warp_col);
+
 extern "C" __global__ void forward_propagate_wmma_kernel( const float* __restrict__ A,
                                                           const float* __restrict__ B,
                                                           float*       __restrict__ C,
@@ -156,11 +168,12 @@ extern "C" __global__ void forward_propagate_wmma_kernel( const float* __restric
 
     float* C_Tile = reinterpret_cast<float*>(ABdata);
 
-    Write_Z_Tile(C, b,
+    Write_Z_Tile_opt(C, b,
                  Accumulated_fragments,
                  C_Tile,
                  M, N,
                  i0, j0,
+                 lane,
                  warp_id,
                  warp_row,
                  warp_col);
@@ -360,6 +373,109 @@ __device__ __forceinline__ void Compute_Tile(__half ABdata[2][2][BLOCK_TILE_K][B
     }
 
 }
+
+template<typename AccFrag>
+__device__ __forceinline__ void Write_Z_Tile_opt(float* __restrict__ C,
+                                             const float* __restrict__ Bias,
+                                             AccFrag& Accumulated_fragments,
+                                             float* C_Tile,
+                                             int M, int N,
+                                             int i0, int j0,
+                                             int lane,
+                                             int warp_id,
+                                             int warp_row,
+                                             int warp_col)
+{
+    // Pad the leading dimension by 4 to suppress bank conflicts and ensure alignment
+    constexpr int SMEM_STRIDE = WMMA_TILE_N + 4;
+    float* __restrict__ C_Tile_Warp_Ptr = C_Tile + warp_id * WMMA_TILE_M * SMEM_STRIDE;
+
+    const int w_row_tile = i0 + warp_row * WARP_TILE_M;
+    const int w_col_tile = j0 + warp_col * WARP_TILE_N;
+
+    const int sub_tile_index = 8*lane;
+
+    #pragma unroll
+    for (int tile_row = 0; tile_row < NUM_WMMA_TILES_M; tile_row++)
+    {
+        const int row = w_row_tile + tile_row * WMMA_TILE_M;
+
+        #pragma unroll
+        for (int tile_col = 0; tile_col < NUM_WMMA_TILES_N; tile_col++)
+        {
+            const int col = w_col_tile + tile_col * WMMA_TILE_N;
+            const int g_index = row*N + col;
+
+
+            // Store fragment into padded shared memory
+            wmma::store_matrix_sync(C_Tile_Warp_Ptr,
+                                    Accumulated_fragments[tile_row][tile_col],
+                                    SMEM_STRIDE,
+                                    wmma::mem_row_major);
+
+            // Check the full-tile boundary outside the write loop
+            // if true, use float4 vectorised operations
+            const bool full_tile = (row + WMMA_TILE_M <= M) && (col + WMMA_TILE_N <= N);
+
+            // Each thread in a warp computes 2 consecutive float4 reads and writes (no guards)
+            if (full_tile) // vectorised
+            {
+                const int ti = sub_tile_index / WMMA_TILE_N;
+                const int tj = sub_tile_index % WMMA_TILE_N;
+                const int offset = ti*N + tj;
+
+                const float bias_val = Bias[row + ti];
+
+                #pragma unroll
+                for (int n=0; n < 2; n++)
+                {
+                    const float4 acc = *reinterpret_cast<const float4*>(&C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + 4*n]);
+                    const float z0 = acc.x + bias_val;
+                    const float z1 = acc.y + bias_val;
+                    const float z2 = acc.z + bias_val;
+                    const float z3 = acc.w + bias_val;
+
+                    *reinterpret_cast<float4*>(&C[g_index +offset + 4*n]) = make_float4(z0,z1,z2,z3);
+                }
+
+            }
+            else // Scalar fallback -> each lane computes 8 elements with a vectorised check
+            {
+                const int ti = sub_tile_index / WMMA_TILE_N;
+                const int tj = sub_tile_index % WMMA_TILE_N;
+                const int offset = ti*N + tj;
+
+                if ( (row + ti) < M)
+                {
+                    const float bias_val = Bias[row + ti];
+
+                    #pragma unroll
+                    for (int n = 0; n < 8; n+=4)
+                    {
+                     if ((col + tj + n + 3) < N)
+                     {
+                        const float4 acc = *reinterpret_cast<const float4*>(&C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n]);
+                        const float z0 = acc.x + bias_val;
+                        const float z1 = acc.y + bias_val;
+                        const float z2 = acc.z + bias_val;
+                        const float z3 = acc.w + bias_val;
+                        *reinterpret_cast<float4*>(&C[g_index +offset + n]) = make_float4(z0,z1,z2,z3);
+                     }
+                     else
+                     {
+                        if ((col + tj + n) < N) C[g_index +offset + n] = C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n] + bias_val;
+                        if ((col + tj + n+1) < N) C[g_index +offset + n+1] = C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n+1] + bias_val;
+                        if ((col + tj + n+2) < N) C[g_index +offset + n+2] = C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n+2] + bias_val;
+                        if ((col + tj + n+3) < N) C[g_index +offset + n+3] = C_Tile_Warp_Ptr[ti*SMEM_STRIDE + tj + n+3] + bias_val;
+                     }
+                    }
+                }
+            }
+        }
+    }
+
+}
+
 
 template<typename AccFrag>
 __device__ __forceinline__ void Write_Z_Tile(float* __restrict__ C,
