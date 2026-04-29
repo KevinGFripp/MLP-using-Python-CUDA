@@ -25,6 +25,13 @@ weight_gradient_wmma_kernel = RawKernel(
 weight_gradient_wmma_kernel.compile()
 
 
+bias_gradient_kernel = RawKernel(
+    Path('src/CUDA/MLP/Backwards/Kernels/bias_gradient_kernel.cu').read_text(),
+                        'bias_gradient_kernel')
+bias_gradient_kernel.compile()
+
+
+
 def hidden_layer_gradient(W: ndarray, gradient: ndarray, this_gradient: ndarray, this_z: ndarray):
 
     M = W.shape[1]
@@ -91,6 +98,17 @@ def weight_gradient_wmma(this_gradient: ndarray, previous_activation: ndarray, d
                                  M, N, K))
     return
 
+def bias_gradient(layer_gradient: ndarray, d_bias: ndarray):
+    M,N = layer_gradient.shape
+    norm_factor = float32(1. / N)
+
+    bias_gradient_kernel(*bias_config(M),
+                    (layer_gradient.data.ptr,
+                         d_bias.data.ptr,
+                         norm_factor,
+                          M, N))
+
+
 
 def kernel_config(M: int,N: int):
     Blocks_N = 128
@@ -99,3 +117,8 @@ def kernel_config(M: int,N: int):
     block_y = (M + Blocks_M - 1)//Blocks_M
 
     return (block_x,block_y,),(256,)
+
+def bias_config(M: int):
+    threads = 256
+    blocks = M
+    return (blocks,),(256,)
