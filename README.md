@@ -5,13 +5,15 @@ This project explores low-level GPU optimisation strategies and benchmarks them 
 
 <img width="587" height="414" alt="Schematic" src="https://github.com/user-attachments/assets/09def155-d6bd-4be7-b189-475a15e82762" />
 
-## Summary (Batch size = 4096, 10 Epochs, 60000 samples)
+## Summary
 
 | Implementation    | Train Time (s)     | Throughput          |
 | ----------------- | ------------------ | ------------------- |
 | NumPy (CPU)       | ~11 s              | ~10k samples/s      |
 | PyTorch (GPU)     | ~0.256 s           | ~224k samples/s     |
 | **This CUDA MLP** | **~0.16 s**        | **~360k samples/s** |
+
+(Batch size = 4096, 10 Epochs, 60000 samples)
 
 * ~ **60**x **speedup vs CPU** due to improved saturation of the GPU at larger batch sizes.
 * ~**60**% **faster than PyTorch** at this batch size.
