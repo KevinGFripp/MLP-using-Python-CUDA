@@ -1,84 +1,125 @@
 # MLP-using-Python-CUDA
-A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Python, for the MNIST digits classification problem.
-This repository benchmarks varied CUDA optimisations in the forward and backward passes of the network relative to a PyTorch analog.
+A high-performance implementation of a multi-layer perceptron (MLP) for MNIST digit classification, using custom CUDA kernels executed through Python.
+
+This project explores low-level GPU optimisation strategies and benchmarks them against a PyTorch equivalent, with a focus on kernel fusion, memory efficiency, and GEMM performance.
 
 <img width="587" height="414" alt="Schematic" src="https://github.com/user-attachments/assets/09def155-d6bd-4be7-b189-475a15e82762" />
 
-## Network Features
-- Multi-level dense layer perceptron.
-- Rectified linear (ReLU) and softmax activation functions for the input/hidden layers and output layer, respectively.
-- Network weights initialised with "He"-type random numbers drawn from a uniform distribution.
-- Cross-entropy loss function.
-- Optimisation with either stochastic Adaptive moment-estimation (Adam) or stochastic gradient descent.
-- Training with multiple epochs via random shuffling and mini-batches.
+## Summary (Batch size = 4096, 10 Epochs, 60000 samples)
 
-## Performance : MLP-CPU versus PyTorch-GPU and MLP-CUDA
--Hardware: Ryzen 9 9950x3d and an RTX 4090
+| Implementation    | Train Time (s)     | Throughput          |
+| ----------------- | ------------------ | ------------------- |
+| NumPy (CPU)       | ~11 s              | ~10k samples/s      |
+| PyTorch (GPU)     | ~0.256 s           | ~224k samples/s     |
+| **This CUDA MLP** | **~0.16 s**        | **~360k samples/s** |
+
+* ~ **60**x **speedup vs CPU** due to improved saturation of the GPU at larger batch sizes.
+* ~**60**% **faster than PyTorch** at this batch size.
+
+### Why faster?
+* Aggressive kernel fusion (minimised trips to global memory)
+* Strong compute from leveraging **tensor-core GEMM kernels**
+* Optimised memory access from careful **indexing** and **vectorisation**
+
+## Features
+* Fully-connected feedforward neural network
+* ReLU activations (hidden layers) and Softmax (output layer)
+* He initialisation (uniform variant)
+* Cross-entropy loss
+* Optimisers: 
+    * Adam
+    * Stochastic Gradient Descent (SGD)
+* Mini-batch training with per-epoch shuffling
+* End-to-end GPU execution via custom CUDA kernel
+* Mini-batch training with per-epoch shuffling
+* End-to-end GPU execution via custom CUDA kernels
+
+## Performance with batch size
+Hardware: Ryzen 9 9950X3D + RTX 4090
 
 <img width="1396" height="693" alt="PyTorchVersusCPUVersusCUDA_revised" src="https://github.com/user-attachments/assets/7803b280-1145-43a9-9ded-fe24208edb9a" />
 
 
-The GPU (~0.16 seconds, ~360000 samples/s) can achieve 40x+ the performance of the CPU NumPy implementation at a batch-size of 4096 due to the problem-size better saturating the GPU.
+## Implementation Overview
+Each step of the training iteration is implemented with custom CUDA kernels:
+* **Forward pass**: One kernel per layer
+* **Backward pass**:
+    * Weight gradients
+    * Bias gradients
+    * Layer gradients
+* **Optimiser(Adam)**: One kernel per layer
 
-Versus Pytorch (~0.256 seconds ~224000 samples/s), this implementation achieves a +60% performance increase from aggressive kernel fusion for the forwards and backwards passes, where the minimisation of visits to global memory alongside extensive vectorisation better feed the tensor cores in this GEMM-dominant workload.
-
-
-
-## Implementation
-- Forward propagation for each layer performed in one CUDA kernel pass.
-- Back propagation for partial derivatives, with respect to the layer, weights, and biases, each a single CUDA kernel.
-- Adam gradient descent optimiser step per layer as a single CUDA kernel.
-- Tensor-core fp16 accelerated fp32 loaded GEMM kernels.
-
-## Training
-The train dataset is randomly shuffled per epoch, where the data is sampled contiguously in mini-batch strides. After the data has been traversed, the accuracy over the entire shuffled data is computed along with the cross-entropy loss. The data is then re-shuffled for the next training epoch.
+### Mixed Precision
+* Leverage tensor cores to accelerate GEMM
+* Accumulate and store in fp32
 
 ## Optimisations
-### Kernel fusion
-Instead of launching multiple kernels, incurring kernel overhead and multiple global memory loads, multiple operations are fused into one kernel call. For example, the forward pass through a hidden layer is a single kernel executing ReLU(Weights * Activation + Bias).
+### 1. Kernel Fusion
+Minimise kernel launch overhead (important at small batch sizes) and global memory access (important at large batch sizes).
 
-### GEMM Optimisation
-A large contribution to the overall solve time will be from repeated matrix-matrix multiplications in the forward and backward passes of the network.
+Example:
+```
+x1 = ReLU(W @ x0 + b)
+```
 
-#### Tiling layout
---- 128 x 16 block tiling 
+would incur multiple kernel launches for each operation: GEMM, bias and assignment.
 
------ 64 x 32 warp tiling
+### 2. GEMM Optimisation
 
--------- 16x16 accumulator tiling
+Matrix multiplication is a dominant contribution to the runtime, so effort should be concentrated there.
 
-#### Loading optimisations
-- Double buffered block-tiled shared memory of size 128x16 to overlap loads with compute.
-- Vectorised float4 loads from global memory where possible.
-- Costly matrix transposes avoided by vectorised row-major global access -> shared memory indexing transpose
-- Shared memory leading dimension padding to suppress bank conflicts.
+#### Tiling Strategy
+```
+Block tile:         128 x 16
+Warp tile:           64 x 32
+Accumulator tile:    16 x 16 (WMMA)
+```
 
-#### Writing optimisations
-- Shared memory staging for the wmma output tile to perform additional operations, e.g. activation or normalisation.
-- Conditional branching based on whether the full tile resides within the output matrix -> Fully vectorised writes.
-- Each warp handles it's respective output tile and writes back data contiguously based upon the warp lane.
+#### Memory Access Optimisations
 
-The optimisations implemented here for the GEMM kernels are not exhaustive. More performance could be extracted from tuning of kernel parameters, for example, or using true asynchronous buffering of the data.
+* Double buffered block-tile shared memory (overlap compute and loading)
+* Vectorised ```float4``` global memory reads
+* Implicit transpose via shared memory indexing (avoids costly strided access from explicit transpose)
+* Shared memory padding to avoid bank conflicts and satisfy ```__half``` alignment.
+
+#### Write Optimisations
+
+* Shared memory staging for processing (e.g. activation)
+* Vectorised WMMA or otherwise global writes when tiles lay within bounds
+* Warp-level assignment of output tiles for coalesced writes
 
 
-### Adaptive Moment Estimation Optimisation
-Every iteration of the train loop passes through the weights and biases optimiser based upon propagated gradients in the backward pass. The following optimisations were implemented:
+  Further optimisations are possible from parameter tuning or incorporating ```cp.async``` asynchronous pipelining.
 
-- Vectorised loads and writes to/from global memory.
-- Operation fusion into a single kernel.
+### 3. Adaptive Moment Estimation (Adam) Optimisation
+* Fused kernel per layer
+* Vectorised ```float4``` memory access
+* Minimised global memory access
+
+### 4. Bias Gradient Reduction Optimisation
+* Vectorised ```float4``` memory access
+* Warp-level sum reduction avoiding shared memory storage
+* Last warp performs final reduction to write to global memory
+
+## Training
+* Dataset shuffled at the start of each epoch
+* Mini-batches processed sequentially
+* After each epoch:
+    * Full-dataset accuracy and cross-entropy loss computed
+    * Data reshuffled for next epoch
 
 
-## Example:
-### Download the dataset
+## Example Usage:
+### Download MNIST
 ```
 import kagglehub
 # Download latest version
 path = kagglehub.dataset_download("hojjatk/mnist-dataset")
 ```
 
-#### Move data sub-folders to MNIST_dataset folder
+#### Move data into ```MNIST_dataset/``` directory.
 
-### Train and test
+### Train and evaluate
     //Load the MNIST dataset
     (train_data,y),(test_data,test) = load_mnist_data()
 
@@ -98,15 +139,9 @@ path = kagglehub.dataset_download("hojjatk/mnist-dataset")
   ### Output
   ```
 epoch =  1 |  Accuracy =  97.22833 % | Loss =  0.100154914
-epoch =  2 |  Accuracy =  98.64333 % | Loss =  0.05184615
-epoch =  3 |  Accuracy =  99.48167 % | Loss =  0.023750618
-epoch =  4 |  Accuracy =  99.70167 % | Loss =  0.0141675165
 epoch =  5 |  Accuracy =  99.86167 % | Loss =  0.008657567
-epoch =  6 |  Accuracy =  99.956665 % | Loss =  0.004854481
-epoch =  7 |  Accuracy =  99.986664 % | Loss =  0.00238529
-epoch =  8 |  Accuracy =  99.97666 % | Loss =  0.0027756281
-epoch =  9 |  Accuracy =  100.0 % | Loss =  0.0012471621
 epoch =  10 |  Accuracy =  100.0 % | Loss =  0.0007783677
+
 Training accuracy =  100.0 %
 Test accuracy =  98.14 %  | Test loss =  0.07018457
   ```
