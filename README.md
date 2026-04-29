@@ -18,9 +18,9 @@ This repository benchmarks varied CUDA optimisations in the forward and backward
 <img width="1396" height="693" alt="PyTorchVersusCPUVersusCUDA_revised" src="https://github.com/user-attachments/assets/7803b280-1145-43a9-9ded-fe24208edb9a" />
 
 
-The GPU (~0.16 seconds) can achieve 40x+ the performance of the CPU NumPy implementation at a batch-size of 4096 due to the problem-size better saturating the GPU.
+The GPU (~0.16 seconds, ~360000 samples/s) can achieve 40x+ the performance of the CPU NumPy implementation at a batch-size of 4096 due to the problem-size better saturating the GPU.
 
-Versus Pytorch (~0.256 seconds), this implementation achieves a +60% performance increase from aggressive kernel fusion for the forwards and backwards passes, where the minimisation of visits to global memory alongside extensive vectorisation better feed the tensor cores in this GEMM-dominant workload.
+Versus Pytorch (~0.256 seconds ~224000 samples/s), this implementation achieves a +60% performance increase from aggressive kernel fusion for the forwards and backwards passes, where the minimisation of visits to global memory alongside extensive vectorisation better feed the tensor cores in this GEMM-dominant workload.
 
 
 
