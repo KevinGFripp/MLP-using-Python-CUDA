@@ -1,5 +1,6 @@
 # MLP-using-Python-CUDA
 A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Python, for the MNIST digits classification problem.
+This repository benchmarks varied CUDA optimisations in the forward and backward passes of the network relative to a PyTorch analog.
 
 <img width="587" height="414" alt="Schematic" src="https://github.com/user-attachments/assets/09def155-d6bd-4be7-b189-475a15e82762" />
 
@@ -11,62 +12,60 @@ A multi-layer perceptron (MLP) network accelerated with CUDA, implemented in Pyt
 - Optimisation with either stochastic Adaptive moment-estimation (Adam) or stochastic gradient descent.
 - Training with multiple epochs via random shuffling and mini-batches.
 
-## Performance 
-### Ryzen 9950x3D versus RTX 4090 : 10 epochs versus batch size
+## Performance : MLP-CPU versus PyTorch-GPU and MLP-CUDA
+-Hardware: Ryzen 9 9950x3d and an RTX 4090
 
-The GPU (0.27 seconds) can achieve up to ~35x the performance of the CPU NumPy implementation at larger batch sizes due to the problem-size better saturating the GPU. At smaller batch sizes, the dominant cost becomes kernel launch overhead as the GPU becomes under-utilised.
-
-<img width="1036" height="488" alt="CPUvsGPUvsGPUOptimised" src="https://github.com/user-attachments/assets/60478b88-5a7c-4bee-98b2-afde80406508" />
+<img width="1396" height="693" alt="PyTorchVersusCPUVersusCUDA_revised" src="https://github.com/user-attachments/assets/7803b280-1145-43a9-9ded-fe24208edb9a" />
 
 
-### Versus PyTorch : 10 epochs versus batch size
+The GPU (~0.16 seconds) can achieve 40x+ the performance of the CPU NumPy implementation at a batch-size of 4096 due to the problem-size better saturating the GPU.
 
-Up to a batch size of 2048, the minimised kernel executions leads this implementation to be faster than PyTorch. At 2048 batch size, this implementation and PyTorch have converged.
+Versus Pytorch (~0.256 seconds), this implementation achieves a +60% performance increase from aggressive kernel fusion for the forwards and backwards passes, where the minimisation of visits to global memory alongside extensive vectorisation better feed the tensor cores in this GEMM-dominant workload.
 
-<img width="898" height="426" alt="PyTorchvsGPUvsGPUOptimised" src="https://github.com/user-attachments/assets/65bc12a9-a279-4dd4-98cd-401e76ef1898" />
+
 
 ## Implementation
 - Forward propagation for each layer performed in one CUDA kernel pass.
-- Back propagation for partial derivatives, with respect to the layer and weights, each a single CUDA kernel.
+- Back propagation for partial derivatives, with respect to the layer, weights, and biases, each a single CUDA kernel.
 - Adam gradient descent optimiser step per layer as a single CUDA kernel.
-- Tensor-core accelerated or native fp32 GEMM kernels.
+- Tensor-core fp16 accelerated fp32 loaded GEMM kernels.
 
 ## Training
 The train dataset is randomly shuffled per epoch, where the data is sampled contiguously in mini-batch strides. After the data has been traversed, the accuracy over the entire shuffled data is computed along with the cross-entropy loss. The data is then re-shuffled for the next training epoch.
 
 ## Optimisations
 ### Kernel fusion
-Instead of launching multiple kernels, incurring kernel overhead and multiple global memory loads, multiple operations are fused into one kernel call. For example, the forward pass through a hidden layer is a single kernel executing Activation(Weights * Activation + Bias).
+Instead of launching multiple kernels, incurring kernel overhead and multiple global memory loads, multiple operations are fused into one kernel call. For example, the forward pass through a hidden layer is a single kernel executing ReLU(Weights * Activation + Bias).
 
 ### GEMM Optimisation
 A large contribution to the overall solve time will be from repeated matrix-matrix multiplications in the forward and backward passes of the network.
 
-#### GEMM tiling structure
---- 128 x 16 block tiling (double-buffered shared memory)
+#### Tiling layout
+--- 128 x 16 block tiling 
 
 ----- 64 x 32 warp tiling
 
--------- 8x8 register accumulation (fp32) or 16x16 (half) wmma fragments
-   
-         
-The following optimisations were implemented:
-- Double buffered block-tiled shared memory of size 128x16 to overlap loads with compute.
-- Vectorised float4 loads from global memory.
-- Shared memory leading dimension padding to suppress bank conflicts.
-- Per-warp sub-tiling of shared memory tile blocks.
-- Register-level thread-tiling for matrix-multiply-accumulate in fp32.
-- Tensor core fp32 wmma fragment accumulation for fp16 cast inputs.
-- In-place loading of the transpose of matrices into shared memory by row -> column major indexing for the back-propagation steps.
-- Vectorised float4 write-backs to global memory.
+-------- 16x16 accumulator tiling
 
-The optimisations implemented have not been exhaustive. More performance can be extracted from tuning of kernel parameters, for example.
-The GEMM kernels implemented here will not be faster than cuBLAS or PyTorch kernels.
+#### Loading optimisations
+- Double buffered block-tiled shared memory of size 128x16 to overlap loads with compute.
+- Vectorised float4 loads from global memory where possible.
+- Costly matrix transposes avoided by vectorised row-major global access -> shared memory indexing transpose
+- Shared memory leading dimension padding to suppress bank conflicts.
+
+#### Writing optimisations
+- Shared memory staging for the wmma output tile to perform additional operations, e.g. activation or normalisation.
+- Conditional branching based on whether the full tile resides within the output matrix -> Fully vectorised writes.
+- Each warp handles it's respective output tile and writes back data contiguously based upon the warp lane.
+
+The optimisations implemented here for the GEMM kernels are not exhaustive. More performance could be extracted from tuning of kernel parameters, for example, or using true asynchronous buffering of the data.
+
 
 ### Adaptive Moment Estimation Optimisation
 Every iteration of the train loop passes through the weights and biases optimiser based upon propagated gradients in the backward pass. The following optimisations were implemented:
 
 - Vectorised loads and writes to/from global memory.
-- Operation fusion into a single kernel to minimise overhead and visits to global memory.
+- Operation fusion into a single kernel.
 
 
 ## Example:
