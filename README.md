@@ -32,9 +32,8 @@ This project explores low-level GPU optimisation strategies and benchmarks them 
     * Adam
     * Stochastic Gradient Descent (SGD)
 * Mini-batch training with per-epoch shuffling
-* End-to-end GPU execution via custom CUDA kernel
-* Mini-batch training with per-epoch shuffling
 * End-to-end GPU execution via custom CUDA kernels
+* Mini-batch training with per-epoch shuffling
 
 ## Performance with batch size
 Hardware: Ryzen 9 9950X3D + RTX 4090
