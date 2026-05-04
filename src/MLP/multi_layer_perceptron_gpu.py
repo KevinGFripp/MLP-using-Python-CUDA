@@ -5,10 +5,12 @@ from src.Optimiser.optimisers_gpu import SGDOptimiser, AdamOptimiser
 from src.MLP.network_layer_gpu import Layer
 
 from src.CUDA.MLP.Activations.activation_kernels import relu as relu_cuda
+from src.CUDA.MLP.Activations.activation_kernels import softmax_10
 #from src.CUDA.MLP.Forwards.forward_propagation_kernels import hidden_layer, forward_propagate
 from src.CUDA.MLP.Forwards.forward_propagation_kernels import hidden_layer_wmma, forward_propagate_wmma
 #from src.CUDA.MLP.Backwards.backward_propagation_kernels import hidden_layer_gradient, weight_gradient
 from src.CUDA.MLP.Backwards.backward_propagation_kernels import weight_gradient_wmma, hidden_layer_gradient_wmma
+from src.CUDA.MLP.Backwards.backward_propagation_kernels import bias_gradient
 
 import matplotlib.pyplot as plt
 from cupy.random import permutation
@@ -152,7 +154,8 @@ class MultiLayerPerceptronGPU(object):
         #Output layer
         l = self.n_layers - 1
         forward_propagate_wmma(self.layers[l].W, self.layers[l-1].a, self.layers[l].b, self.layers[l].z)
-        self.layers[l].a = self.softmax(self.layers[l].z)
+        softmax_10(self.layers[l].z,self.layers[l].a)
+        #self.layers[l].a = self.softmax(self.layers[l].z)
 
         return self.layers[l].a
 
@@ -174,7 +177,8 @@ class MultiLayerPerceptronGPU(object):
         # Output layer
         l = self.n_layers - 1
         forward_propagate_wmma(self.layers[l].W, self.layers[l - 1].a_train, self.layers[l].b, self.layers[l].z_train)
-        self.layers[l].a_train = self.softmax(self.layers[l].z_train)
+        softmax_10(self.layers[l].z_train,self.layers[l].a_train)
+        #self.layers[l].a_train = self.softmax(self.layers[l].z_train)
 
         return self.layers[l].a_train
 
@@ -196,7 +200,8 @@ class MultiLayerPerceptronGPU(object):
         #Output layer
         l = self.n_layers - 1
         forward_propagate_wmma(self.layers[l].W, self.layers[l-1].a_test, self.layers[l].b, self.layers[l].z_test)
-        self.layers[l].a_test = self.softmax(self.layers[l].z_test)
+        softmax_10(self.layers[l].z_test,self.layers[l].a_test)
+        #self.layers[l].a_test = self.softmax(self.layers[l].z_test)
 
         return self.layers[l].a_test
 
@@ -219,8 +224,9 @@ class MultiLayerPerceptronGPU(object):
             previous_activation = x if n == 0 else self.layers[n-1].a
 
             weight_gradient_wmma(self.layers[n].gradient, previous_activation, self.layers[n].dW)
-            self.layers[n].db = norm_factor * cp.sum(self.layers[n].gradient, axis=1,
-                                                     keepdims=False, dtype=cp.float32)
+
+            bias_gradient(self.layers[n].gradient, self.layers[n].db)
+
 
 
     def train(self, x, y, epochs, learning_rate = 1e-3, method = 'Adam',beta1 = 0.9, beta2 = 0.999):
@@ -252,14 +258,12 @@ class MultiLayerPerceptronGPU(object):
 
                 optimiser.step(self.layers)
 
-
-            print('epoch = ', epoch + 1, '|',
-                  ' Accuracy = ', self.__accuracy(self.__forward_train_dataset_cuda(input_data), y_data), '%',
-                  '| Loss = ', self.cross_entropy_loss(self.layers[self.n_layers-1].a_train,y_data))
-
-
-        print('Training accuracy = ', self.__accuracy(self.__forward_train_dataset_cuda(x), y),'%')
-
+        #     print('epoch = ', epoch + 1, '|',
+        #           ' Accuracy = ', self.__accuracy(self.__forward_train_dataset_cuda(input_data), y_data), '%',
+        #           '| Loss = ', self.cross_entropy_loss(self.layers[self.n_layers-1].a_train,y_data))
+        #
+        #
+        # print('Training accuracy = ', self.__accuracy(self.__forward_train_dataset_cuda(x), y),'%')
 
     def test(self, x, y):
         # Test array allocations
