@@ -11,29 +11,29 @@ This project explores low-level GPU optimisation strategies and benchmarks them 
 | ----------------- | ------------------ | ------------------- |
 | NumPy (CPU)       | ~11 s              | ~10k samples/s      |
 | PyTorch (GPU)     | ~0.256 s           | ~224k samples/s     |
-| **This CUDA MLP** | **~0.16 s**        | **~360k samples/s** |
+| **This CUDA MLP** | **~0.143s**        | **~395k samples/s** |
 
 (Batch size = 4096, 10 Epochs, 60000 samples)
 
 * ~ **60**x **speedup vs CPU** due to improved saturation of the GPU at larger batch sizes.
-* ~**60**% **faster than PyTorch** at this batch size.
+* ~**80**% **faster than PyTorch** at this batch size.
 
 ### Why faster?
-* Aggressive kernel fusion (minimised trips to global memory)
-* Strong compute from leveraging **tensor-core GEMM kernels**
-* Optimised memory access from careful **indexing** and **vectorisation**
+* Aggressive kernel fusion (minimised trips to global memory).
+* Strong compute from leveraging **tensor-core GEMM kernels**.
+* Optimised memory access from careful **indexing** and **vectorisation**.
 
 ## Features
-* Fully-connected feedforward neural network
-* ReLU activations (hidden layers) and Softmax (output layer)
-* He initialisation (uniform variant)
-* Cross-entropy loss
+* Fully-connected feedforward neural network.
+* ReLU activations (hidden layers) and Softmax (output layer).
+* He initialisation (uniform variant).
+* Cross-entropy loss.
 * Optimisers: 
-    * Adam
-    * Stochastic Gradient Descent (SGD)
-* Mini-batch training with per-epoch shuffling
-* End-to-end GPU execution via custom CUDA kernels
-* Mini-batch training with per-epoch shuffling
+    * Adam.
+    * Stochastic Gradient Descent (SGD).
+* Mini-batch training with per-epoch shuffling.
+* End-to-end GPU execution via custom CUDA kernels.
+* Mini-batch training with per-epoch shuffling.
 
 ## Performance with batch size
 Hardware: Ryzen 9 9950X3D + RTX 4090
@@ -43,16 +43,16 @@ Hardware: Ryzen 9 9950X3D + RTX 4090
 
 ## Implementation Overview
 Each step of the training iteration is implemented with custom CUDA kernels:
-* **Forward pass**: One kernel per layer
+* **Forward pass**: One kernel per layer.
 * **Backward pass**:
-    * Weight gradients
-    * Bias gradients
-    * Layer gradients
-* **Optimiser(Adam)**: One kernel per layer
+    * Weight gradients.
+    * Bias gradients.
+    * Layer gradients.
+* **Optimiser(Adam)**: One kernel per layer.
 
 ### Mixed Precision
-* Leverage tensor cores to accelerate GEMM
-* Accumulate and store in fp32
+* Leverage tensor cores to accelerate GEMM.
+* Accumulate and store in fp32.
 
 ## Optimisations
 ### 1. Kernel Fusion
@@ -78,29 +78,33 @@ Accumulator tile:    16 x 16 (WMMA)
 
 #### Memory Access Optimisations
 
-* Double buffered block-tile shared memory (overlap compute and loading)
-* Vectorised ```float4``` global memory reads
-* Implicit transpose via shared memory indexing (avoids costly strided access from explicit transpose)
+* Double buffered block-tile shared memory (overlap compute and loading).
+* Vectorised ```float4``` global memory reads.
+* Implicit transpose via shared memory indexing (avoids costly strided access from explicit transpose).
 * Shared memory padding to avoid bank conflicts and satisfy ```__half``` alignment.
 
 #### Write Optimisations
 
-* Shared memory staging for processing (e.g. activation)
-* Vectorised WMMA or otherwise global writes when tiles lay within bounds
-* Warp-level assignment of output tiles for coalesced writes
+* Shared memory staging for processing (e.g. activation).
+* Vectorised WMMA or otherwise global writes when tiles lay within bounds.
+* Warp-level assignment of output tiles for coalesced writes.
 
 
   Further optimisations are possible from parameter tuning or incorporating ```cp.async``` asynchronous pipelining.
 
 ### 3. Adaptive Moment Estimation (Adam) Optimisation
-* Fused kernel per layer
-* Vectorised ```float4``` memory access
-* Minimised global memory access
+* Fused kernel per layer.
+* Vectorised ```float4``` memory access.
+* Minimised global memory access.
 
 ### 4. Bias Gradient Reduction Optimisation
-* Vectorised ```float4``` memory access
-* Warp-level sum reduction avoiding shared memory storage
-* Last warp performs final reduction to write to global memory
+* Vectorised ```float4``` memory access.
+* Warp-level sum reduction avoiding shared memory storage.
+* Last warp performs final reduction to write to global memory.
+
+### 5. Softmax Activation Optimisation
+* Padded shared memory tiling with transposing, converting strided global memory access to contiguous-vectorised ```float4```.
+* Half-warp per sample max and sum warp reductions.
 
 ## Training
 * Dataset shuffled at the start of each epoch
