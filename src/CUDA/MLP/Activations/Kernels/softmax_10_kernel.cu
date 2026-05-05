@@ -25,45 +25,37 @@ extern "C" __global__ void softmax_10_kernel(const float* __restrict__ z,
     __shared__ float tile[COL_SIZE][CLASSES_PLUS_PAD];
 
     // If a full tile fits within the number of columns, load without column access guards
-    const bool full_tile = (tile_id + COL_SIZE) < batch_size;
+    const bool full_tile = (tile_id + COL_SIZE) <= batch_size;
 
-    if (row < 10)
+    if (row < 10 && col < 4)
     {
+        const int vec_col = 4*col;
+        const int col_id = tile_id + vec_col;
+
         if (full_tile)
         {
-            #pragma unroll
-            for (int n =4*col; n < COL_SIZE; n+=4)
-            {
-                const int col_id = tile_id + n;
-                float4 v = *reinterpret_cast<const float4*>(&z[row*batch_size + col_id]);
-                tile[n][row] = v.x;
-                tile[n+1][row] = v.y;
-                tile[n+2][row] = v.z;
-                tile[n+3][row] = v.w;
-            }
+            float4 v = *reinterpret_cast<const float4*>(&z[row*batch_size + col_id]);
+            tile[vec_col][row] = v.x;
+            tile[vec_col+1][row] = v.y;
+            tile[vec_col+2][row] = v.z;
+            tile[vec_col+3][row] = v.w;
         }
         else
         {
-            #pragma unroll
-            for (int n =4*col; n < COL_SIZE; n+=4)
+            if (col_id + 3 < batch_size)
             {
-                const int col_id = tile_id + n;
-
-                if (col_id + 3 < batch_size)
-                {
-                    float4 v = *reinterpret_cast<const float4*>(&z[row*batch_size + col_id]);
-                    tile[n][row] = v.x;
-                    tile[n+1][row] = v.y;
-                    tile[n+2][row] = v.z;
-                    tile[n+3][row] = v.w;
-                }
-                else
-                {
-                    tile[n][row] = (col_id < batch_size)? z[row*batch_size + col_id] : PAD_VAL;
-                    tile[n+1][row] = (col_id+1 < batch_size)? z[row*batch_size + col_id +1] : PAD_VAL;
-                    tile[n+2][row] = (col_id+2 < batch_size)? z[row*batch_size + col_id +2] : PAD_VAL;
-                    tile[n+3][row] = (col_id+3 < batch_size)? z[row*batch_size + col_id +3] : PAD_VAL;
-                }
+                float4 v = *reinterpret_cast<const float4*>(&z[row*batch_size + col_id]);
+                tile[vec_col][row] = v.x;
+                tile[vec_col+1][row] = v.y;
+                tile[vec_col+2][row] = v.z;
+                tile[vec_col+3][row] = v.w;
+            }
+            else
+            {
+                tile[vec_col][row] = (col_id < batch_size)? z[row*batch_size + col_id] : PAD_VAL;
+                tile[vec_col+1][row] = (col_id+1 < batch_size)? z[row*batch_size + col_id +1] : PAD_VAL;
+                tile[vec_col+2][row] = (col_id+2 < batch_size)? z[row*batch_size + col_id +2] : PAD_VAL;
+                tile[vec_col+3][row] = (col_id+3 < batch_size)? z[row*batch_size + col_id +3] : PAD_VAL;
             }
         }
     }
