@@ -11,7 +11,7 @@ This project explores low-level GPU optimisation strategies and benchmarks them 
 | ----------------- | ------------------ | ------------------- |
 | NumPy (CPU)       | ~11 s              | ~10k samples/s      |
 | PyTorch (GPU)     | ~0.256 s           | ~224k samples/s     |
-| **This CUDA MLP** | **~0.143s**        | **~395k samples/s** |
+| **This CUDA MLP** | **~0.14s**        | **~411k samples/s** |
 
 (Batch size = 4096, 10 Epochs, 60000 samples)
 
