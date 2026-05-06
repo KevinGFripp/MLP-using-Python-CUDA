@@ -38,7 +38,7 @@ This project explores low-level GPU optimisation strategies and benchmarks them 
 ## Performance with batch size
 Hardware: Ryzen 9 9950X3D + RTX 4090
 
-<img width="1396" height="693" alt="PyTorchVersusCPUVersusCUDA_revised" src="https://github.com/user-attachments/assets/7803b280-1145-43a9-9ded-fe24208edb9a" />
+<img width="1372" height="690" alt="PyTorchVersusCPUVersusCUDA_revised" src="https://github.com/user-attachments/assets/9d2014fb-3e5d-4738-af23-ba71f3ba594f" />
 
 
 ## Implementation Overview
