@@ -258,12 +258,12 @@ class MultiLayerPerceptronGPU(object):
 
                 optimiser.step(self.layers)
 
-        #     print('epoch = ', epoch + 1, '|',
-        #           ' Accuracy = ', self.__accuracy(self.__forward_train_dataset_cuda(input_data), y_data), '%',
-        #           '| Loss = ', self.cross_entropy_loss(self.layers[self.n_layers-1].a_train,y_data))
-        #
-        #
-        # print('Training accuracy = ', self.__accuracy(self.__forward_train_dataset_cuda(x), y),'%')
+            print('epoch = ', epoch + 1, '|',
+                  ' Accuracy = ', self.__accuracy(self.__forward_train_dataset_cuda(input_data), y_data), '%',
+                  '| Loss = ', self.cross_entropy_loss(self.layers[self.n_layers-1].a_train,y_data))
+        
+        
+        print('Training accuracy = ', self.__accuracy(self.__forward_train_dataset_cuda(x), y),'%')
 
     def test(self, x, y):
         # Test array allocations
