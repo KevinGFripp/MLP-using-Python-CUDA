@@ -224,35 +224,79 @@ __device__ __forceinline__ void Load_Tile_opt(
         ABdata[MATRIX_A][buffer][s_col + 3][s_row] = __high2half(h23);
     }
 
-    // Load PreviousActivation matrix
-    // BLOCK_TILE_N == 128 is a multiple of 8
-    // Again two float4 loads
+    // Load PreviousActivation matrix and transpose into shared memory
     #pragma unroll
     for (int i = 0; i < B_LOADS; i+=4)
     {
         const int lin0  = tid * B_LOADS + i;
-        const int s_row = lin0 / BLOCK_TILE_N;
-        const int s_col = lin0 % BLOCK_TILE_N;
+        // For the transpose, the outer-most shared memory dimension is now BLOCK_TILE_K as B dimensions are N x K
+        int s_row = lin0 / BLOCK_TILE_K;
+        int s_col = lin0 % BLOCK_TILE_K;
 
-        const int g_row = k_tile + s_row;
-        const int g_col = j0 + s_col;
+        // Replace i0 with j0 because with respect to the blocks, rows have become columns
+        const int g_row = j0 + s_row;
+
+        // The tiling is now going across rows of B == traversing columns of transpose(B)
+        const int g_col = k_tile + s_col;
 
         float4 v = make_float4(0.f, 0.f, 0.f, 0.f);
 
-        if (g_row < K)
+        // Start the pointer at the beginning of this buffer's tile.
+        __half* B_ptr = &ABdata[MATRIX_B][buffer][0][0];
+
+        // row-major indexing
+        if (g_row < N)
         {
-                // scalar fallback
-                if (g_col + 0 < N) v.x = PreviousActivation[g_col * K + g_row];
-                if (g_col + 1 < N) v.y = PreviousActivation[(g_col +1) * K + g_row];
-                if (g_col + 2 < N) v.z = PreviousActivation[(g_col +2) * K + g_row];
-                if (g_col + 3 < N) v.w = PreviousActivation[(g_col +3) * K + g_row];
+                if (g_col +3 < K) // vectorised
+                {
+                    v = *reinterpret_cast<const float4*>(&PreviousActivation[g_row * K + g_col]);
+                }
+                else // scalar fallback
+                {
+                    if (g_col     < K) v.x = PreviousActivation[g_row * K + g_col];
+                    if (g_col + 1 < K) v.y = PreviousActivation[g_row * K + g_col+1];
+                    if (g_col + 2 < K) v.z = PreviousActivation[g_row * K + g_col+2];
+                    if (g_col + 3 < K) v.w = PreviousActivation[g_row * K + g_col+3];
+                }
         }
 
-        // Write B shared data with vectorised half2 write
-        __half2* B_half2_ptr = reinterpret_cast<__half2*>(&ABdata[MATRIX_B][buffer][s_row][s_col]);
-        B_half2_ptr[0] = __float22half2_rn(make_float2(v.x, v.y));
-        B_half2_ptr[1] = __float22half2_rn(make_float2(v.z, v.w));
+        // Write B shared data
+        // We want to write column major indexing, respecting the padding, into the row-major buffer
+        // to perform the transpose in shared memory.
+        const int cm_index = s_col * (BLOCK_TILE_N + 8) + s_row;
+        B_ptr[cm_index] = __float2half_rn(v.x);
+        B_ptr[cm_index + (BLOCK_TILE_N + 8)] = __float2half_rn(v.y);
+        B_ptr[cm_index + 2*(BLOCK_TILE_N + 8)] = __float2half_rn(v.z);
+        B_ptr[cm_index + 3*(BLOCK_TILE_N + 8)] = __float2half_rn(v.w);
     }
+
+
+//     #pragma unroll
+//     for (int i = 0; i < B_LOADS; i+=4)
+//     {
+//         const int lin0  = tid * B_LOADS + i;
+//         const int s_row = lin0 / BLOCK_TILE_N;
+//         const int s_col = lin0 % BLOCK_TILE_N;
+//
+//         const int g_row = k_tile + s_row;
+//         const int g_col = j0 + s_col;
+//
+//         float4 v = make_float4(0.f, 0.f, 0.f, 0.f);
+//
+//         if (g_row < K)
+//         {
+//                 // scalar fallback , column major global indexing for transpose
+//                 if (g_col + 0 < N) v.x = PreviousActivation[g_col * K + g_row];
+//                 if (g_col + 1 < N) v.y = PreviousActivation[(g_col +1) * K + g_row];
+//                 if (g_col + 2 < N) v.z = PreviousActivation[(g_col +2) * K + g_row];
+//                 if (g_col + 3 < N) v.w = PreviousActivation[(g_col +3) * K + g_row];
+//         }
+//
+//         // Write B shared data with vectorised half2 write
+//         __half2* B_half2_ptr = reinterpret_cast<__half2*>(&ABdata[MATRIX_B][buffer][s_row][s_col]);
+//         B_half2_ptr[0] = __float22half2_rn(make_float2(v.x, v.y));
+//         B_half2_ptr[1] = __float22half2_rn(make_float2(v.z, v.w));
+//     }
 }
 
 template<typename AFrag, typename BFrag, typename CFrag>
@@ -325,6 +369,8 @@ __device__ __forceinline__ void Write_Gradient_Tile_opt(float* __restrict__ dW,
     const int w_row_tile = i0 + warp_row * WARP_TILE_M;
     const int w_col_tile = j0 + warp_col * WARP_TILE_N;
 
+   const int sub_tile_index = 8*lane;
+
 
     #pragma unroll
     for (int tile_row = 0; tile_row < NUM_WMMA_TILES_M; tile_row++)
@@ -338,14 +384,16 @@ __device__ __forceinline__ void Write_Gradient_Tile_opt(float* __restrict__ dW,
 
             // if true, use float4 vectorised operations
             const bool full_tile = (row + WMMA_TILE_M <= M) && (col + WMMA_TILE_N <= N);
-
+            const int TILE_NUM_ELEMENTS = Accumulated_fragments[tile_row][tile_col].num_elements;
             if (full_tile)
             {
-            //apply normalisation (each lane in the warp computes 8 results)
+            //apply normalisation (each lane in the warp computes up to 8 results)
             #pragma unroll
-            for (int n = lane; n < Accumulated_fragments[tile_row][tile_col].num_elements; n+=32)
+            for (int n=0; n < 8; n++)
             {
-             Accumulated_fragments[tile_row][tile_col].x[n] *= norm_factor;
+                const int ind = sub_tile_index + n;
+                if (ind < TILE_NUM_ELEMENTS)
+                {Accumulated_fragments[tile_row][tile_col].x[ind] *= norm_factor;}
             }
 
             float* dW_ptr = dW + row * N + col;
@@ -364,7 +412,6 @@ __device__ __forceinline__ void Write_Gradient_Tile_opt(float* __restrict__ dW,
                                         SMEM_STRIDE,
                                         wmma::mem_row_major);
 
-                const int sub_tile_index = 8*lane;
                 const int ti = sub_tile_index / WMMA_TILE_N;
                 const int tj = sub_tile_index % WMMA_TILE_N;
                 const int offset = ti*N + tj;
